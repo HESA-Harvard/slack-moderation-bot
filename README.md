@@ -58,13 +58,19 @@ deployed Worker's `*.workers.dev` URL (or a custom domain if one is set up).
 Create the app at api.slack.com/apps, scoped to the HESA workspace only, and
 do **not** list it in the Slack Marketplace.
 
-**Bot token scopes:** `channels:history`, `channels:read`, `users:read`,
-`chat:write`, `commands`, `reactions:read`. Do not add `im:history`,
-`mpim:history`, or any user token scope — the moderation policy tells members
-DMs are not monitored, and the app must be technically incapable of it.
+**Bot token scopes:** `channels:history`, `channels:read`, `channels:join`,
+`users:read`, `chat:write`, `commands`, `reactions:read`. Do not add
+`im:history`, `mpim:history`, or any user token scope — the moderation
+policy tells members DMs are not monitored, and the app must be technically
+incapable of it. `channels:join` only lets the bot join *public* channels it's
+told about via `channel_created` (see below) — Slack doesn't fire that event
+for private channels, so it can't be used to reach into one.
 
-**Event subscriptions:** `reaction_added` only. This app does not subscribe
-to `message.channels` in Phase 1 — see CLAUDE.md Section 3 for why.
+**Event subscriptions:** `reaction_added` and `channel_created`. This app
+does not subscribe to `message.channels` in Phase 1 — see CLAUDE.md Section 3
+for why. `channel_created` exists solely so the bot auto-joins new public
+channels (see "Auto-join" below) — it carries only the channel's id and name,
+nothing else.
 
 **Slash commands:** register `/report`.
 
@@ -80,9 +86,12 @@ actions, since Phase 1 alerts are read-only).
 (Settings → Customize → Emoji) so it's distinct from ordinary reactions. If a
 different name is used, update `FLAG_EMOJI` in `wrangler.toml` to match.
 
-**Channel membership:** the bot must be invited to every public channel it
-should cover (`/invite @HESA Moderation Bot`). It receives no events for
-channels it hasn't joined — add this to the channel-creation checklist.
+**Channel membership (auto-join):** the bot joins new public channels
+automatically via the `channel_created` event and `conversations.join` — see
+`src/handlers/channelCreated.ts`. This only covers channels created *after*
+the app is installed; invite it to any pre-existing channels once, manually
+(`/invite @HESA Moderation Bot`). It receives no events for channels it
+hasn't joined.
 
 ## Google Drive (archive) setup
 
@@ -146,6 +155,7 @@ src/
   handlers/
     report.ts             /report slash command + modal submission
     reaction.ts             flag-emoji reaction handling
+    channelCreated.ts        auto-joins new public channels
   archive/
     schema.ts               incident record types
     drive.ts                  Google auth + Drive writes, with failure fallback

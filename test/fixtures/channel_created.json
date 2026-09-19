@@ -1,0 +1,13 @@
+{
+  "type": "event_callback",
+  "event_id": "Ev0CHANCREATED01",
+  "event": {
+    "type": "channel_created",
+    "channel": {
+      "id": "C0NEWCHANNEL",
+      "name": "new-channel",
+      "created": 1726600000,
+      "creator": "U0CREATOR"
+    }
+  }
+}

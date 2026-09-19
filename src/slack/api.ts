@@ -100,6 +100,11 @@ export async function listChannels(token: string): Promise<SlackChannel[]> {
   return (body.channels as SlackChannel[] | undefined) ?? [];
 }
 
+/** Joins a public channel the bot isn't in yet — requires the channels:join scope. */
+export async function joinChannel(token: string, channel: string): Promise<void> {
+  await callSlack(token, "conversations.join", { channel });
+}
+
 /** Last-resort path when the archive write itself fails — see archive/drive.ts. */
 export async function postFailureNotice(token: string, channel: string, record: IncidentRecord): Promise<void> {
   const blocks = buildArchiveFailureBlocks(record);

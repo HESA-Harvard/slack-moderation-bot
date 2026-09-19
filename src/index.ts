@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { verifySlackSignature } from "./slack/verify";
 import { claimEvent } from "./dedupe";
 import { handleReactionAdded, type ReactionAddedEvent } from "./handlers/reaction";
+import { handleChannelCreated, type ChannelCreatedEvent } from "./handlers/channelCreated";
 import { handleReportCommand, handleReportSubmission, isReportSubmission } from "./handlers/report";
 
 export interface Env {
@@ -38,7 +39,11 @@ app.post("/slack/events", async (c) => {
   const rawBody = c.get("rawBody");
   const payload = JSON.parse(rawBody) as
     | { type: "url_verification"; challenge: string }
-    | { type: "event_callback"; event_id: string; event: ReactionAddedEvent & { type: string } };
+    | {
+        type: "event_callback";
+        event_id: string;
+        event: ((ReactionAddedEvent & { type: "reaction_added" }) | (ChannelCreatedEvent & { type: "channel_created" }));
+      };
 
   if (payload.type === "url_verification") {
     return c.text(payload.challenge);
@@ -48,6 +53,8 @@ app.post("/slack/events", async (c) => {
     const isNew = await claimEvent(c.env.DEDUPE, payload.event_id);
     if (isNew && payload.event.type === "reaction_added") {
       c.executionCtx.waitUntil(handleReactionAdded(c.env, payload.event));
+    } else if (isNew && payload.event.type === "channel_created") {
+      c.executionCtx.waitUntil(handleChannelCreated(c.env, payload.event));
     }
   }
 
