@@ -1,4 +1,5 @@
 import type { IncidentRecord, SlackMessageRef } from "../archive/schema";
+import { DIRECT_MESSAGE_OPTION_VALUE } from "./modal";
 
 // Minimal Block Kit typing — enough to build the blocks this app sends, not a full SDK surface.
 export interface Block {
@@ -33,7 +34,11 @@ export function buildIncidentAlertBlocks(record: IncidentRecord, archiveLink?: s
   }
 
   if (record.source === "report") {
-    blocks.push(section(`*What happened:*\n${record.report_text}`));
+    const where = record.channel === DIRECT_MESSAGE_OPTION_VALUE ? "Direct message" : `<#${record.channel}>`;
+    blocks.push(
+      contextBlock([`Where: ${where}`]),
+      section(`*What happened:*\n${record.report_text}`),
+    );
     if (!record.anonymous && record.reporter_user_id) {
       blocks.push(contextBlock([`Reported by <@${record.reporter_user_id}>`]));
     } else {

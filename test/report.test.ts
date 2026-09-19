@@ -58,5 +58,8 @@ describe("handleReportSubmission", () => {
     expect(alertCall!.body).toContain("Filed anonymously");
     // The incident id should be hyperlinked to the archived file.
     expect(alertCall!.body).toContain("https://drive.google.com/file/d/file123/view");
+    // The "Where" field (fixture selects C0GENERAL) must be visible in the alert,
+    // not just the archive file — moderators shouldn't have to open Drive to see it.
+    expect(alertCall!.body).toContain("C0GENERAL");
   });
 });
