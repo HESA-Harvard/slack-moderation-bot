@@ -1,0 +1,14 @@
+{
+  "type": "event_callback",
+  "event_id": "Ev0FLAGTEST01",
+  "event": {
+    "type": "reaction_added",
+    "reaction": "flag-for-review",
+    "user": "U0REPORTER",
+    "item": {
+      "type": "message",
+      "channel": "C0GENERAL",
+      "ts": "1726600000.000100"
+    }
+  }
+}

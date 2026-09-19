@@ -1,0 +1,33 @@
+{
+  "type": "view_submission",
+  "user": { "id": "U0REPORTER" },
+  "view": {
+    "callback_id": "report_modal",
+    "private_metadata": "C0GENERAL",
+    "state": {
+      "values": {
+        "what_happened": { "value": { "value": "Someone kept cross-posting the same ad in three channels." } },
+        "where": { "value": { "selected_option": { "value": "C0GENERAL" } } },
+        "when": { "value": { "selected_date_time": 1789830000 } },
+        "who": {
+          "value": {
+            "rich_text_value": {
+              "type": "rich_text",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    { "type": "text", "text": "Mostly " },
+                    { "type": "user", "user_id": "U0ACCUSED" },
+                    { "type": "text", "text": ", plus a couple others in the thread." }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "file_as": { "value": { "selected_option": { "value": "anonymous" } } }
+      }
+    }
+  }
+}
