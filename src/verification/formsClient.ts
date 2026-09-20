@@ -1,5 +1,5 @@
 import { fetchWithTimeout } from "../http";
-import type { VerificationAction } from "./schema";
+import type { VerificationAction, VerificationButtonPayload } from "./schema";
 
 const CALLBACK_TIMEOUT_MS = 5000;
 
@@ -15,12 +15,16 @@ const CALLBACK_TIMEOUT_MS = 5000;
  * and query params. (The other direction — Apps Script calling us — isn't
  * affected; that's Apps Script as the *client*, and UrlFetchApp can set
  * whatever headers it likes, which our own server reads normally.)
+ *
+ * `applicant.status` rides along mainly for the more_info email, which
+ * conditionally suggests resubmitting with a g.harvard.edu email — see
+ * access-queue.gs's EMAIL_TEMPLATES.more_info.
  */
 export async function notifyFormsCallback(
   callbackUrl: string,
   sharedSecret: string,
   action: VerificationAction,
-  applicant: { full_name: string; email: string },
+  applicant: VerificationButtonPayload,
 ): Promise<void> {
   const res = await fetchWithTimeout(
     callbackUrl,

@@ -15,6 +15,14 @@
  * Copy it into script.google.com; it is not deployed by `wrangler`.
  *
  * SETUP
+ * Deliberately kept on a personal @g.harvard.edu account for now rather than
+ * a HESA-controlled Gmail account, even though that ties it to one officer —
+ * the Form collects HUIDs, and a consumer Gmail account sits outside
+ * Harvard's institutional Google Workspace governance (data residency,
+ * e-discovery, admin oversight) that a @g.harvard.edu account has. Revisit
+ * this if HESA obtains its own dedicated @g.harvard.edu account for org
+ * infrastructure; until then this single-officer dependency is accepted
+ * knowingly, not by oversight.
  * 1. Create the Google Form. Required question titles (must match exactly —
  *    onFormSubmit() below looks them up by title):
  *      - "Full name"
@@ -102,43 +110,79 @@ function onFormSubmit(e) {
     submitted_at: new Date().toISOString(),
   };
 
-  UrlFetchApp.fetch(props.getProperty("WORKER_SUBMIT_URL"), {
+  var response = UrlFetchApp.fetch(props.getProperty("WORKER_SUBMIT_URL"), {
     method: "post",
     contentType: "application/json",
     headers: { "X-Form-Secret": props.getProperty("FORM_INTEGRATION_SECRET") },
     payload: JSON.stringify(payload),
-    muteHttpExceptions: true,
+    muteHttpExceptions: true, // so we can log the real status instead of throwing
   });
+
+  var status = response.getResponseCode();
+  if (status !== 200) {
+    // Check Executions (clock icon, left sidebar) for this — 401 means
+    // FORM_INTEGRATION_SECRET doesn't match the Worker's; 404 means
+    // WORKER_SUBMIT_URL is wrong or missing /forms/verification-submit;
+    // anything else, read the body below.
+    Logger.log("Worker rejected submission: %s %s", status, response.getContentText());
+  } else {
+    Logger.log("Submission relayed to Worker successfully.");
+  }
 }
 
+// Must mirror src/verification/blocks.ts's STATUSES_EXPECTED_ON_HARVARD_DOMAIN.
+var STATUSES_EXPECTED_ON_HARVARD_DOMAIN = ["degree_alb", "degree_alm"];
+
+/**
+ * True only for an applicant who claimed degree status but didn't submit
+ * with a g.harvard.edu email — the same condition that puts the mismatch
+ * warning on the #access-queue alert. Suggesting a resubmit is only useful
+ * (and not confusing) in exactly that case: a course-taker without that
+ * domain is normal, and a degree candidate who already used it has nothing
+ * to gain from resubmitting.
+ */
+function shouldSuggestHarvardEmail(status, email) {
+  var isDegreeCandidate = STATUSES_EXPECTED_ON_HARVARD_DOMAIN.indexOf(status) !== -1;
+  var alreadyHarvardEmail = typeof email === "string" && email.toLowerCase().indexOf("@g.harvard.edu") !== -1;
+  return isDegreeCandidate && !alreadyHarvardEmail;
+}
+
+// Each template takes one context object rather than positional args, since
+// they need different fields (invite link, applicant status/email) — see
+// doPost() below for what's in ctx.
 var EMAIL_TEMPLATES = {
-  approve: function (name, inviteLink) {
+  approve: function (ctx) {
     return {
       subject: "Your HESA Slack access request was approved",
       body:
-        "Hi " + name + ",\n\n" +
+        "Hi " + ctx.name + ",\n\n" +
         "Your request to join the HESA Slack workspace has been approved. Join here:\n" +
-        inviteLink + "\n\n" +
+        ctx.inviteLink + "\n\n" +
         "This link is for you personally — please don't forward or post it elsewhere.\n\n" +
         "If it doesn't work, just reply to this email and we'll sort it out.\n\nHESA",
     };
   },
-  more_info: function (name) {
+  more_info: function (ctx) {
+    var harvardEmailNote = shouldSuggestHarvardEmail(ctx.status, ctx.email)
+      ? "\n\nIf you're an admitted degree student, resubmitting the form using your g.harvard.edu " +
+        "email may speed up verification.\n"
+      : "";
     return {
       subject: "HESA Slack access request: more information needed",
       body:
-        "Hi " + name + ",\n\n" +
+        "Hi " + ctx.name + ",\n\n" +
         "Thanks for requesting access to the HESA Slack. Before we can approve your request, " +
         "we need a bit more proof of your current HES enrollment — for example, a screenshot of " +
-        "your MyDCE registration or a course confirmation email.\n\n" +
+        "your MyDCE registration or a course confirmation email." +
+        harvardEmailNote + "\n" +
         "Please reply directly to this email with that information.\n\nHESA",
     };
   },
-  deny: function (name) {
+  deny: function (ctx) {
     return {
       subject: "HESA Slack access request: not approved",
       body:
-        "Hi " + name + ",\n\n" +
+        "Hi " + ctx.name + ",\n\n" +
         "We weren't able to verify your current HES enrollment from your request, so we couldn't " +
         "approve access to the HESA Slack at this time.\n\n" +
         "If you think this is a mistake, or can provide further proof of enrollment (a MyDCE " +
@@ -171,14 +215,21 @@ function doPost(e) {
   var template = EMAIL_TEMPLATES[body.action];
   if (!template) return ContentService.createTextOutput("unknown action");
 
-  var name = body.full_name || "";
-  var email = template.length > 1 ? template(name, props.getProperty("SLACK_INVITE_LINK")) : template(name);
+  var emailContent = template({
+    name: body.full_name || "",
+    email: body.email,
+    status: body.status,
+    inviteLink: props.getProperty("SLACK_INVITE_LINK"),
+  });
 
   MailApp.sendEmail({
     to: body.email,
     replyTo: props.getProperty("REPLY_TO_EMAIL"),
-    subject: email.subject,
-    body: email.body,
+    name: "HESA", // MailApp always sends as the account executing the script (whatever
+    // that is), and can't change the actual From address — this just makes it display
+    // as "HESA <that-account>" instead of the account's raw name/address.
+    subject: emailContent.subject,
+    body: emailContent.body,
   });
 
   return ContentService.createTextOutput("ok");

@@ -105,6 +105,9 @@ describe("handleVerificationAction", () => {
     expect(callbackCall).toBeDefined();
     expect(callbackCall!.body).toContain("jamie@g.harvard.edu");
     expect(callbackCall!.body).toContain('"action":"approve"');
+    // Apps Script's more_info template conditionally suggests a g.harvard.edu resubmit
+    // based on this — see access-queue.gs's shouldSuggestHarvardEmail.
+    expect(callbackCall!.body).toContain('"status":"degree_alm"');
 
     const updateCall = calls.find((c) => c.url.includes("chat.update"));
     expect(updateCall).toBeDefined();
