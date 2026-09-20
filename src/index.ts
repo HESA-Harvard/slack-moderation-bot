@@ -1,9 +1,12 @@
 import { Hono } from "hono";
-import { verifySlackSignature } from "./slack/verify";
+import { verifySlackSignature, timingSafeEqual } from "./slack/verify";
 import { claimEvent } from "./dedupe";
 import { handleReactionAdded, type ReactionAddedEvent } from "./handlers/reaction";
 import { handleChannelCreated, type ChannelCreatedEvent } from "./handlers/channelCreated";
 import { handleReportCommand, handleReportSubmission, isReportSubmission } from "./handlers/report";
+import { handleVerificationSubmit, handleVerificationAction, isVerificationAction } from "./handlers/verification";
+import { handleInviteLinkRefreshed, INVITE_LINK_REFRESHED_ACTION_ID } from "./verification/inviteLinkGuard";
+import type { VerificationSubmission } from "./verification/schema";
 
 export interface Env {
   DEDUPE: KVNamespace;
@@ -13,6 +16,9 @@ export interface Env {
   MOD_ALERTS_CHANNEL: string;
   ARCHIVE_FOLDER_ID: string;
   FLAG_EMOJI: string;
+  ACCESS_QUEUE_CHANNEL: string;
+  FORM_CALLBACK_URL: string;
+  FORM_INTEGRATION_SECRET: string;
 }
 
 type Variables = { rawBody: string };
@@ -84,7 +90,25 @@ app.post("/slack/interactivity", async (c) => {
   const payload = JSON.parse(payloadRaw);
   if (payload.type === "view_submission" && isReportSubmission(payload)) {
     c.executionCtx.waitUntil(handleReportSubmission(c.env, payload));
+  } else if (isVerificationAction(payload)) {
+    c.executionCtx.waitUntil(handleVerificationAction(c.env, payload));
+  } else if (payload.type === "block_actions" && payload.actions?.[0]?.action_id === INVITE_LINK_REFRESHED_ACTION_ID) {
+    c.executionCtx.waitUntil(handleInviteLinkRefreshed(c.env, payload));
   }
+
+  return c.text("", 200);
+});
+
+// Not a Slack request — Apps Script relays new Google Form rows here. Authenticated
+// with a shared secret instead of Slack's signature scheme, so it sits outside /slack/*.
+app.post("/forms/verification-submit", async (c) => {
+  const provided = c.req.header("X-Form-Secret") ?? "";
+  if (!timingSafeEqual(provided, c.env.FORM_INTEGRATION_SECRET)) {
+    return c.text("invalid secret", 401);
+  }
+
+  const submission = (await c.req.json()) as VerificationSubmission;
+  c.executionCtx.waitUntil(handleVerificationSubmit(c.env, submission));
 
   return c.text("", 200);
 });

@@ -7,11 +7,11 @@ export interface Block {
   [key: string]: unknown;
 }
 
-function section(text: string): Block {
+export function section(text: string): Block {
   return { type: "section", text: { type: "mrkdwn", text } };
 }
 
-function contextBlock(elements: string[]): Block {
+export function contextBlock(elements: string[]): Block {
   return { type: "context", elements: elements.map((text) => ({ type: "mrkdwn", text })) };
 }
 

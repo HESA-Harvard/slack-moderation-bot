@@ -7,6 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 MOD_ALERTS_CHANNEL = "C0C32GUK49X"
 ARCHIVE_FOLDER_ID = "1NwYY1YgfOwg_IiLkT9WYio7Dk7ieaGtC"
 FLAG_EMOJI = "flag-for-review"
+ACCESS_QUEUE_CHANNEL = "C0C28U1KGJK"
+FORM_CALLBACK_URL = "https://script.google.com/a/macros/g.harvard.edu/s/AKfycbz_G1xXGo7LvPGfuW3pkPQzcg5xF3j_qcc608WvDxdgjDzPiVFlQqku6EtHsOe1kq8n/exec"
 
 [[kv_namespaces]]
 binding = "DEDUPE"
@@ -16,3 +18,4 @@ id = "81e32a00a4b54fffa009d1c4ac30c888"
 #   SLACK_SIGNING_SECRET
 #   SLACK_BOT_TOKEN
 #   GOOGLE_SA_KEY
+#   FORM_INTEGRATION_SECRET

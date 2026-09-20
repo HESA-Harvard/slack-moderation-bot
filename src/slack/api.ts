@@ -31,6 +31,10 @@ export async function postMessage(token: string, channel: string, blocks: Block[
   await callSlack(token, "chat.postMessage", { channel, blocks, text });
 }
 
+export async function updateMessage(token: string, channel: string, ts: string, blocks: Block[], text: string): Promise<void> {
+  await callSlack(token, "chat.update", { channel, ts, blocks, text });
+}
+
 export async function postEphemeral(
   token: string,
   channel: string,
