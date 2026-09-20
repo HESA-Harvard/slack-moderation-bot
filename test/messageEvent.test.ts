@@ -75,4 +75,27 @@ describe("handleMessageEvent", () => {
     await handleMessageEvent(messageEnv, messageEvent({ channel: "C4", ts: "1.4" }));
     expect(calls.filter((c) => c.url.includes("chat.postMessage"))).toHaveLength(1);
   });
+
+  it("notes a repeat pattern on a second, separate incident from the same author, not the first", async () => {
+    const calls: { url: string; body: string }[] = [];
+    stubFetch(calls);
+    const messageEnv = makeEnv();
+    const user = "U_REPEAT_OFFENDER";
+
+    // First incident: a distinct message, own burst of 3 channels.
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "First spam message here today", channel: "C1", ts: "1.1" }));
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "First spam message here today", channel: "C2", ts: "1.2" }));
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "First spam message here today", channel: "C3", ts: "1.3" }));
+
+    // Second, unrelated-text incident from the same author.
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "Second unrelated spam message", channel: "C1", ts: "2.1" }));
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "Second unrelated spam message", channel: "C2", ts: "2.2" }));
+    await handleMessageEvent(messageEnv, messageEvent({ user, text: "Second unrelated spam message", channel: "C3", ts: "2.3" }));
+
+    const alertCalls = calls.filter((c) => c.url.includes("chat.postMessage"));
+    expect(alertCalls).toHaveLength(2);
+    expect(alertCalls[0]!.body).not.toContain("Repeat pattern");
+    expect(alertCalls[1]!.body).toContain("Repeat pattern");
+    expect(alertCalls[1]!.body).toContain("2nd cross-post flag");
+  });
 });

@@ -223,7 +223,18 @@ minutes. When that threshold is crossed, one alert posts to a private shadow
 channel — not `#mod-alerts` — with the message text, author, and a permalink
 to each occurrence. See `src/patterns/crossPost.ts` for the exact mechanics
 and `src/handlers/messageEvent.ts` for the event filtering (subtype/bot
-messages/short messages are all skipped before anything is hashed).
+messages/short messages are all skipped before anything is hashed). Alert
+messages set `unfurl_links: false` (see `src/slack/api.ts`) so Slack doesn't
+turn every permalink into its own preview card — otherwise an author hitting
+many channels would produce an enormous alert.
+
+**Repeat-flag count.** Alongside the burst detector above, `recordRepeatFlag`
+tracks how many times each author has *triggered an alert* (not just posted
+a message) over a rolling 30 days. When an author's count is 2 or higher,
+the alert gets an extra line: "Repeat pattern — Nth cross-post flag for this
+author in the last 30 days." This is deliberately just visible context for
+a human, never an automated escalation — see "What's deliberately not here"
+for why that boundary matters here specifically, not just as a general rule.
 
 **Why shadow mode, not live.** Per `docs/build-spec.md`'s own phasing, running
 silently in a channel only the Director of Technology (and maybe one
@@ -249,6 +260,18 @@ without some read on tone or intent — which means real language analysis,
 not a bigger version of this same rule-based approach. That's a different,
 harder problem, likely bundled with a future classifier phase rather than
 built standalone.
+
+Also deliberately not here: any kind of automated "N strikes" escalation for
+repeat offenders — CLAUDE.md's "no automated enforcement, ever" rules out an
+automated action, but this specifically isn't a fit even as a severity bump.
+`docs/moderation-policy.md` Section 5 already defines repeat-offender
+handling ("a prior *finding* at any tier within 12 months" as an aggravating
+factor), and a finding is a moderator's adjudicated decision, not a raw
+detector flag — conflating the two would let this heuristic quietly drive
+outcomes the policy reserves for humans. Unsolicited-promotion posting is
+also explicitly a Tier 0 example in that same section, HESA's mildest
+category, handled with an informal redirect or DM. The repeat-flag count
+above is as far as this goes: visible context for a human, nothing more.
 
 **Setup:**
 - Create a private shadow-alerts channel and invite the bot (not covered by

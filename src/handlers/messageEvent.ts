@@ -1,5 +1,5 @@
 import { postMessage, getPermalink } from "../slack/api";
-import { hashMessageText, recordCrossPost, MIN_MESSAGE_LENGTH } from "../patterns/crossPost";
+import { hashMessageText, recordCrossPost, recordRepeatFlag, MIN_MESSAGE_LENGTH } from "../patterns/crossPost";
 import { buildCrossPostAlertBlocks } from "../patterns/blocks";
 
 export interface MessageEnv {
@@ -41,8 +41,11 @@ export async function handleMessageEvent(env: MessageEnv, event: MessageChannels
   const { shouldAlert, occurrences } = await recordCrossPost(env.DEDUPE, event.user, hash, event.channel, event.ts);
   if (!shouldAlert) return;
 
-  const permalinks = await Promise.all(occurrences.map((o) => getPermalink(env.SLACK_BOT_TOKEN, o.channel, o.ts)));
-  const blocks = buildCrossPostAlertBlocks({ authorId: event.user, text, occurrences, permalinks });
+  const [permalinks, recentFlagCount] = await Promise.all([
+    Promise.all(occurrences.map((o) => getPermalink(env.SLACK_BOT_TOKEN, o.channel, o.ts))),
+    recordRepeatFlag(env.DEDUPE, event.user),
+  ]);
+  const blocks = buildCrossPostAlertBlocks({ authorId: event.user, text, occurrences, permalinks, recentFlagCount });
   await postMessage(
     env.SLACK_BOT_TOKEN,
     env.SHADOW_ALERTS_CHANNEL,

@@ -1,21 +1,49 @@
 import { section, contextBlock, type Block } from "../slack/blocks";
-import { CROSS_POST_WINDOW_SECONDS, type CrossPostOccurrence } from "./crossPost";
+import { CROSS_POST_WINDOW_SECONDS, RECENT_FLAG_WINDOW_SECONDS, type CrossPostOccurrence } from "./crossPost";
+
+function ordinal(n: number): string {
+  const lastTwo = n % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
+}
 
 export function buildCrossPostAlertBlocks(params: {
   authorId: string;
   text: string;
   occurrences: CrossPostOccurrence[];
   permalinks: string[];
+  recentFlagCount: number;
 }): Block[] {
   const channelLines = params.occurrences
     .map((o, i) => `<#${o.channel}> — <${params.permalinks[i]}|permalink>`)
     .join("\n");
   const windowMinutes = CROSS_POST_WINDOW_SECONDS / 60;
 
-  return [
+  const blocks: Block[] = [
     section(`*Possible cross-post* (shadow mode — not acted on)\nAuthor: <@${params.authorId}>`),
     section(`*Message:*\n${params.text}`),
     section(`*Posted in ${params.occurrences.length} channels within ${windowMinutes} minutes:*\n${channelLines}`),
-    contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]),
   ];
+
+  // Only worth a line when it actually shows a pattern — "1st flag" tells a
+  // reviewer nothing they don't already see above.
+  if (params.recentFlagCount > 1) {
+    const recentFlagWindowDays = RECENT_FLAG_WINDOW_SECONDS / (24 * 60 * 60);
+    blocks.push(
+      contextBlock([`:repeat: Repeat pattern — ${ordinal(params.recentFlagCount)} cross-post flag for this author in the last ${recentFlagWindowDays} days`]),
+    );
+  }
+
+  blocks.push(contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]));
+
+  return blocks;
 }
