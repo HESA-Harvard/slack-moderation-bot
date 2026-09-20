@@ -3,6 +3,7 @@ import { verifySlackSignature, timingSafeEqual } from "./slack/verify";
 import { claimEvent } from "./dedupe";
 import { handleReactionAdded, type ReactionAddedEvent } from "./handlers/reaction";
 import { handleChannelCreated, type ChannelCreatedEvent } from "./handlers/channelCreated";
+import { handleMessageEvent, type MessageChannelsEvent } from "./handlers/messageEvent";
 import { handleReportCommand, handleReportSubmission, isReportSubmission } from "./handlers/report";
 import { handleVerificationSubmit, handleVerificationAction, isVerificationAction } from "./handlers/verification";
 import { handleInviteLinkRefreshed, INVITE_LINK_REFRESHED_ACTION_ID } from "./verification/inviteLinkGuard";
@@ -19,6 +20,7 @@ export interface Env {
   ACCESS_QUEUE_CHANNEL: string;
   FORM_CALLBACK_URL: string;
   FORM_INTEGRATION_SECRET: string;
+  SHADOW_ALERTS_CHANNEL: string;
 }
 
 type Variables = { rawBody: string };
@@ -48,7 +50,11 @@ app.post("/slack/events", async (c) => {
     | {
         type: "event_callback";
         event_id: string;
-        event: ((ReactionAddedEvent & { type: "reaction_added" }) | (ChannelCreatedEvent & { type: "channel_created" }));
+        event: (
+          | (ReactionAddedEvent & { type: "reaction_added" })
+          | (ChannelCreatedEvent & { type: "channel_created" })
+          | (MessageChannelsEvent & { type: "message" })
+        );
       };
 
   if (payload.type === "url_verification") {
@@ -61,6 +67,8 @@ app.post("/slack/events", async (c) => {
       c.executionCtx.waitUntil(handleReactionAdded(c.env, payload.event));
     } else if (isNew && payload.event.type === "channel_created") {
       c.executionCtx.waitUntil(handleChannelCreated(c.env, payload.event));
+    } else if (isNew && payload.event.type === "message") {
+      c.executionCtx.waitUntil(handleMessageEvent(c.env, payload.event));
     }
   }
 

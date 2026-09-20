@@ -66,11 +66,14 @@ incapable of it. `channels:join` only lets the bot join *public* channels it's
 told about via `channel_created` (see below) — Slack doesn't fire that event
 for private channels, so it can't be used to reach into one.
 
-**Event subscriptions:** `reaction_added` and `channel_created`. This app
-does not subscribe to `message.channels` in Phase 1 — see CLAUDE.md Section 3
-for why. `channel_created` exists solely so the bot auto-joins new public
-channels (see "Auto-join" below) — it carries only the channel's id and name,
-nothing else.
+**Event subscriptions:** `reaction_added`, `channel_created`, and
+`message.channels`. Phase 1 deliberately didn't subscribe to
+`message.channels` — see CLAUDE.md Section 3 — but cross-post detection
+(below) needs it. `channel_created` exists solely so the bot auto-joins new
+public channels (see "Auto-join" below) — it carries only the channel's id
+and name, nothing else. `message.channels` is scoped to public channels only
+(there's no `message.im`/`message.mpim`/`message.groups` subscription), so
+this still can't reach DMs or private channels.
 
 **Slash commands:** register `/report`.
 
@@ -202,6 +205,58 @@ reason to turn it on.
   running low, regenerate it the same way (still Never expires) and click
   "Mark link refreshed."
 
+## Cross-post detection (shadow mode)
+
+The two most common real problems in this community, per HESA's own
+observation, are unsolicited promotion cross-posted across channels and the
+dogpiling that follows it — not sneaky one-on-one harassment, which mostly
+happens in DMs this app can't see anyway. This is a narrow, rule-based
+detector for the cross-post half of that. It is **not** the classifier
+described in `docs/build-spec.md` Section 4 (no Perspective API, no LLM, no
+new paid dependency) — that's deliberately deferred; see "What's deliberately
+not here" below.
+
+**What it does.** Every public-channel message (`message.channels`) is
+checked: same author, same message text (normalized and hashed — the text
+itself is never stored), posted in 3 or more distinct channels within 10
+minutes. When that threshold is crossed, one alert posts to a private shadow
+channel — not `#mod-alerts` — with the message text, author, and a permalink
+to each occurrence. See `src/patterns/crossPost.ts` for the exact mechanics
+and `src/handlers/messageEvent.ts` for the event filtering (subtype/bot
+messages/short messages are all skipped before anything is hashed).
+
+**Why shadow mode, not live.** Per `docs/build-spec.md`'s own phasing, running
+silently in a channel only the Director of Technology (and maybe one
+moderator) can see — with nothing acted on — is what lets the 3-channels/
+10-minutes thresholds get tuned against HESA's actual traffic instead of
+guessed at. Going live also triggers a community disclosure obligation per
+`docs/moderation-policy.md` Section 3 ("HESA discloses its monitoring rather
+than conducting it quietly") that shadow mode doesn't, since nothing here is
+acted on or shown to moderators generally.
+
+**Data minimization.** KV stores a SHA-256 hash of the normalized message
+text plus channel/timestamp pairs, never the text itself, on a TTL fixed to
+the detection window — it expires whether or not a threshold is ever
+crossed. The message text that *does* appear in an alert comes from the live
+event that triggered it, not from anything persisted. Nothing is written to
+the Drive archive in shadow mode.
+
+**What's deliberately not here.** Pile-on/dogpile detection was designed
+(reply-volume spikes in a thread) and deliberately cut: at 2,000 members, a
+popular thread can organically pull in several replies within minutes, and a
+purely volume-based heuristic can't tell that apart from an actual pile-on
+without some read on tone or intent — which means real language analysis,
+not a bigger version of this same rule-based approach. That's a different,
+harder problem, likely bundled with a future classifier phase rather than
+built standalone.
+
+**Setup:**
+- Create a private shadow-alerts channel and invite the bot (not covered by
+  public-channel auto-join), then set `SHADOW_ALERTS_CHANNEL` in
+  `wrangler.toml`.
+- Add `message.channels` under Event Subscriptions (see "Slack app setup"
+  above).
+
 ## Configuration reference
 
 | Name | Kind | Where set | What it is |
@@ -215,19 +270,29 @@ reason to turn it on.
 | `ACCESS_QUEUE_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for `#access-queue` |
 | `FORM_CALLBACK_URL` | var | `wrangler.toml` | Apps Script Web App URL (ends in `/exec`) |
 | `FORM_INTEGRATION_SECRET` | secret | `wrangler secret put` | Shared secret with Apps Script — both directions, see "Access requests" |
-| `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id counter, cached Google access token |
+| `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private cross-post shadow-mode channel |
+| `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id counter, cached Google access token, cross-post tracking |
 
 Rotating any secret is `wrangler secret put NAME` again — no code change
 required.
 
 ## What's deliberately not here
 
-Per `CLAUDE.md`: no message classifier, no LLM tier assignment, no cross-post
-or pile-on detection, no alert action buttons or triage state, no digests,
-and no subscription to ordinary channel messages. These are Phase 2+ in
-`docs/build-spec.md`. Screenshot upload in `/report` is also omitted for now
-— reporters are told they can share an image with a moderator directly
-instead of a half-working upload flow.
+Per `CLAUDE.md` and later scoping decisions: no Perspective API or LLM
+classifier, no tier assignment, no pile-on/dogpile detection (see "Cross-post
+detection" above for why — it needs real language analysis, not a bigger
+version of the rule-based cross-post detector), no action buttons or triage
+state on `#mod-alerts` itself (the access-queue and cross-post-warning alerts
+do have buttons — that's a separate, later decision), and no digests. These
+are open per `docs/build-spec.md`'s later phases. Screenshot upload in
+`/report` is also omitted for now — reporters are told they can share an
+image with a moderator directly instead of a half-working upload flow.
+
+Message content *is* now read (`message.channels`, for cross-post detection
+only, shadow mode only) — this was true from early on in this repo's history
+but is worth restating here since Phase 1's original design explicitly
+didn't do this; see "Cross-post detection" above for the full reasoning and
+scope of what changed.
 
 ## Dependency risk
 
@@ -253,6 +318,7 @@ src/
     reaction.ts             flag-emoji reaction handling
     channelCreated.ts        auto-joins new public channels
     verification.ts           access-queue submit + button handling
+    messageEvent.ts             message.channels dispatch (cross-post detection)
   archive/
     schema.ts               incident record types
     drive.ts                  Google auth + Drive writes, with failure fallback
@@ -261,6 +327,10 @@ src/
     blocks.ts                  #access-queue alert + status-line Block Kit
     formsClient.ts              callback to the Apps Script Web App
     inviteLinkGuard.ts            use-count tracking + refresh warning
+  patterns/
+    crossPost.ts              hashing + KV tracking + threshold logic
+    blocks.ts                   shadow-mode alert Block Kit
+  crypto.ts                  toHex — shared by request verification and cross-post hashing
   dedupe.ts                  KV helpers: event dedup, alert dedup, incident ids
 test/                       unit tests + recorded Slack payload fixtures
 google-apps-script/         Apps Script source (not deployed by wrangler — see

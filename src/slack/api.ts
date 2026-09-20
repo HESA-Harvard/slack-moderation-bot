@@ -27,12 +27,17 @@ async function callSlack(token: string, method: string, payload: Record<string, 
   return body;
 }
 
+// Every alert we post contains Slack permalinks purely as "click to jump to the
+// message" references — the content itself is already shown inline in our own
+// blocks, so an unfurled preview card per link is pure duplication, and can make
+// an alert citing many occurrences (e.g. a cross-post hitting many channels) far
+// longer than the actual content warrants.
 export async function postMessage(token: string, channel: string, blocks: Block[], text: string): Promise<void> {
-  await callSlack(token, "chat.postMessage", { channel, blocks, text });
+  await callSlack(token, "chat.postMessage", { channel, blocks, text, unfurl_links: false, unfurl_media: false });
 }
 
 export async function updateMessage(token: string, channel: string, ts: string, blocks: Block[], text: string): Promise<void> {
-  await callSlack(token, "chat.update", { channel, ts, blocks, text });
+  await callSlack(token, "chat.update", { channel, ts, blocks, text, unfurl_links: false, unfurl_media: false });
 }
 
 export async function postEphemeral(

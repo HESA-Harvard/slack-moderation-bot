@@ -27,7 +27,7 @@
  *    onFormSubmit() below looks them up by title):
  *      - "Full name"
  *      - "Which best describes you?" (multiple choice, options must match
- *        STATUS_OPTION_TO_CODE below exactly, en-dashes included):
+ *        STATUS_OPTION_TO_CODE below exactly):
  *          "Degree candidate - undergraduate (ALB)"
  *          "Degree candidate - graduate (ALM)"
  *          "Certificate or microcertificate student"
@@ -84,10 +84,13 @@
  */
 
 // Must mirror ApplicantStatus / STATUS_LABELS in src/verification/schema.ts exactly.
-// Note the en-dash (–), not a hyphen, in the first two — matches the Form's
-// actual option text exactly. Google Forms/Docs auto-substitutes hyphens to
-// en-dashes in some contexts, so this is what's really there; don't "fix"
-// it back to a plain hyphen without checking the live Form first.
+// These keys must match the Form's option text character-for-character —
+// Google Forms/Docs sometimes auto-substitutes a plain hyphen for an en-dash
+// (or vice versa) depending on how the text was entered, so a "cosmetic"
+// edit to the Form's option text can silently break this lookup. If status
+// ever shows as unrecognized again, check Executions for onFormSubmit's
+// logged warning — it prints the exact raw text Forms sent, which is more
+// trustworthy than eyeballing dash characters copy-pasted through chat/email.
 var STATUS_OPTION_TO_CODE = {
   "Degree candidate - undergraduate (ALB)": "degree_alb",
   "Degree candidate - graduate (ALM)": "degree_alm",

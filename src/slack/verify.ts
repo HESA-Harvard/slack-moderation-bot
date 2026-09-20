@@ -1,3 +1,5 @@
+import { toHex } from "../crypto";
+
 const MAX_TIMESTAMP_SKEW_SECONDS = 5 * 60;
 
 export function timingSafeEqual(a: string, b: string): boolean {
@@ -7,12 +9,6 @@ export function timingSafeEqual(a: string, b: string): boolean {
     mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return mismatch === 0;
-}
-
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 /**
