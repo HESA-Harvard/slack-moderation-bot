@@ -21,6 +21,7 @@ export interface Env {
   FORM_CALLBACK_URL: string;
   FORM_INTEGRATION_SECRET: string;
   SHADOW_ALERTS_CHANNEL: string;
+  OPENAI_API_KEY: string;
 }
 
 type Variables = { rawBody: string };

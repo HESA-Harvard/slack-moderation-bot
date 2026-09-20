@@ -1,11 +1,13 @@
-import { postMessage, getPermalink } from "../slack/api";
+import { postMessage, getPermalink, fetchMessageWithContext } from "../slack/api";
 import { hashMessageText, recordCrossPost, recordRepeatFlag, MIN_MESSAGE_LENGTH } from "../patterns/crossPost";
-import { buildCrossPostAlertBlocks } from "../patterns/blocks";
+import { scoreMessage } from "../patterns/moderationScoring";
+import { buildCrossPostAlertBlocks, buildModerationAlertBlocks } from "../patterns/blocks";
 
 export interface MessageEnv {
   DEDUPE: KVNamespace;
   SLACK_BOT_TOKEN: string;
   SHADOW_ALERTS_CHANNEL: string;
+  OPENAI_API_KEY: string;
 }
 
 /**
@@ -24,9 +26,14 @@ export interface MessageChannelsEvent {
   ts: string;
 }
 
+const MODERATION_CONTEXT_MESSAGE_COUNT = 3;
+
 /**
  * message.channels dispatch — shadow mode only (see README "Cross-post
- * detection"). Caller has already ack'd; this runs in waitUntil.
+ * detection" and "Stage 1 moderation scoring"). Caller has already ack'd;
+ * this runs in waitUntil. Cross-post detection and moderation scoring are
+ * independent checks on the same message — each runs and fails on its own,
+ * so one erroring never prevents the other.
  */
 export async function handleMessageEvent(env: MessageEnv, event: MessageChannelsEvent): Promise<void> {
   // subtype is set for edits, deletes, joins, bot messages relayed as a subtype, etc. —
@@ -35,21 +42,47 @@ export async function handleMessageEvent(env: MessageEnv, event: MessageChannels
   if (!event.user || !event.text) return;
 
   const text = event.text.trim();
+  if (!text) return;
+
+  await Promise.all([checkCrossPost(env, event, text), checkModeration(env, event, text)]);
+}
+
+// Cross-post's minimum length exists to cut noise from short common replies
+// repeated coincidentally — not relevant to moderation scoring, where a short
+// slur or threat is still meaningful, so that check stays scoped to this path.
+async function checkCrossPost(env: MessageEnv, event: MessageChannelsEvent, text: string): Promise<void> {
   if (text.length < MIN_MESSAGE_LENGTH) return;
 
   const hash = await hashMessageText(text);
-  const { shouldAlert, occurrences } = await recordCrossPost(env.DEDUPE, event.user, hash, event.channel, event.ts);
+  const { shouldAlert, occurrences } = await recordCrossPost(env.DEDUPE, event.user!, hash, event.channel, event.ts);
   if (!shouldAlert) return;
 
   const [permalinks, recentFlagCount] = await Promise.all([
     Promise.all(occurrences.map((o) => getPermalink(env.SLACK_BOT_TOKEN, o.channel, o.ts))),
-    recordRepeatFlag(env.DEDUPE, event.user),
+    recordRepeatFlag(env.DEDUPE, event.user!),
   ]);
-  const blocks = buildCrossPostAlertBlocks({ authorId: event.user, text, occurrences, permalinks, recentFlagCount });
+  const blocks = buildCrossPostAlertBlocks({ authorId: event.user!, text, occurrences, permalinks, recentFlagCount });
   await postMessage(
     env.SLACK_BOT_TOKEN,
     env.SHADOW_ALERTS_CHANNEL,
     blocks,
     `Possible cross-post by <@${event.user}> in ${occurrences.length} channels`,
+  );
+}
+
+async function checkModeration(env: MessageEnv, event: MessageChannelsEvent, text: string): Promise<void> {
+  const score = await scoreMessage(env.OPENAI_API_KEY, text);
+  if (!score?.flagged) return;
+
+  const [permalink, { context }] = await Promise.all([
+    getPermalink(env.SLACK_BOT_TOKEN, event.channel, event.ts),
+    fetchMessageWithContext(env.SLACK_BOT_TOKEN, event.channel, event.ts, MODERATION_CONTEXT_MESSAGE_COUNT),
+  ]);
+  const blocks = buildModerationAlertBlocks({ authorId: event.user!, channel: event.channel, text, permalink, context, score });
+  await postMessage(
+    env.SLACK_BOT_TOKEN,
+    env.SHADOW_ALERTS_CHANNEL,
+    blocks,
+    `Possible harassment/hate flag for <@${event.user}>`,
   );
 }

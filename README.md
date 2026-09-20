@@ -280,6 +280,58 @@ above is as far as this goes: visible context for a human, nothing more.
 - Add `message.channels` under Event Subscriptions (see "Slack app setup"
   above).
 
+## Stage 1 moderation scoring (shadow mode)
+
+`docs/build-spec.md` Section 4 specifies Google's Perspective API for Stage
+1 scoring — but Perspective API stops serving requests December 31, 2026
+with no Google-provided migration path, so this uses **OpenAI's free
+Moderation API** (`omni-moderation-latest`) instead. It's free, run by an
+established vendor, and — the specific thing `docs/build-spec.md` Section 9
+requires checking before launch — its API data is not used to train
+OpenAI's models by default, with a bounded 30-day retention window. See
+`src/patterns/moderationScoring.ts` for the client.
+
+**Scoped categories: `harassment`, `harassment/threatening`, `hate`,
+`hate/threatening` only.** OpenAI's endpoint also scores `self-harm` and
+`sexual` categories, both deliberately excluded here, not just left for
+later:
+- `self-harm` needs the specialized crisis-resource routing the build spec
+  calls for — never a sanction, involving the Dean of Students office — and
+  that's a distinct feature requiring its own careful design, not a side
+  effect of a generic harassment filter.
+- `sexual` (non-threatening) risks flagging exactly the good-faith trauma
+  disclosure CLAUDE.md is explicit is a context mismatch, not misconduct
+  ("members occasionally post heavy personal trauma... nothing in this
+  system should flag, remove, or record it as a violation").
+
+The scoped `flagged` check is computed from those four categories only —
+**not** OpenAI's own top-level `flagged` field, which also covers the
+excluded categories.
+
+**No Stage 2.** The build spec pairs Stage 1 with an LLM call (Stage 2) that
+reads surrounding context and assigns a policy tier — deliberately not
+built yet. Shipping Stage 1 alone risks the same failure mode already ruled
+out for pile-on detection above: a bare score with no read on intent will
+flag reclaimed language, jokes, and quoted speech at a real rate. Two
+mitigations while Stage 2 doesn't exist: this stays in shadow mode (nothing
+reaches `#mod-alerts` or a moderator generally), and a flagged message's
+alert includes 3 preceding messages of context (`fetchMessageWithContext`,
+the same helper the flag-emoji handler uses) so a human has something to
+read instead of just a raw score. Shadow-mode results are the actual
+evidence for whether Stage 2 turns out to be necessary, rather than
+assuming it upfront.
+
+**Failure handling.** Unlike the archive writer, a moderation-scoring
+failure (API down, timeout) fails open — the message is skipped and logged,
+never blocking ordinary message processing. This is a best-effort shadow
+calibration signal, not the archive's "never drop evidence silently"
+guarantee, so a quiet skip is the proportionate response here.
+
+**Setup:** `wrangler secret put OPENAI_API_KEY` — from an OpenAI Platform
+account (no card required to create one, as of this writing). No new
+channel or event subscription needed; this runs inside the same
+`message.channels` handler as cross-post detection.
+
 ## Configuration reference
 
 | Name | Kind | Where set | What it is |
@@ -293,7 +345,8 @@ above is as far as this goes: visible context for a human, nothing more.
 | `ACCESS_QUEUE_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for `#access-queue` |
 | `FORM_CALLBACK_URL` | var | `wrangler.toml` | Apps Script Web App URL (ends in `/exec`) |
 | `FORM_INTEGRATION_SECRET` | secret | `wrangler secret put` | Shared secret with Apps Script — both directions, see "Access requests" |
-| `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private cross-post shadow-mode channel |
+| `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private shadow-mode channel (cross-post + moderation scoring) |
+| `OPENAI_API_KEY` | secret | `wrangler secret put` | OpenAI API key, for Stage 1 moderation scoring |
 | `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id counter, cached Google access token, cross-post tracking |
 
 Rotating any secret is `wrangler secret put NAME` again — no code change
@@ -341,7 +394,7 @@ src/
     reaction.ts             flag-emoji reaction handling
     channelCreated.ts        auto-joins new public channels
     verification.ts           access-queue submit + button handling
-    messageEvent.ts             message.channels dispatch (cross-post detection)
+    messageEvent.ts             message.channels dispatch (cross-post + moderation scoring)
   archive/
     schema.ts               incident record types
     drive.ts                  Google auth + Drive writes, with failure fallback
@@ -352,7 +405,8 @@ src/
     inviteLinkGuard.ts            use-count tracking + refresh warning
   patterns/
     crossPost.ts              hashing + KV tracking + threshold logic
-    blocks.ts                   shadow-mode alert Block Kit
+    moderationScoring.ts        OpenAI Moderation API client (Stage 1)
+    blocks.ts                     shadow-mode alert Block Kit
   crypto.ts                  toHex — shared by request verification and cross-post hashing
   dedupe.ts                  KV helpers: event dedup, alert dedup, incident ids
 test/                       unit tests + recorded Slack payload fixtures

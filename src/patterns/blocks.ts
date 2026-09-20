@@ -1,5 +1,7 @@
 import { section, contextBlock, type Block } from "../slack/blocks";
+import type { SlackHistoryMessage } from "../slack/api";
 import { CROSS_POST_WINDOW_SECONDS, RECENT_FLAG_WINDOW_SECONDS, type CrossPostOccurrence } from "./crossPost";
+import { MODERATION_CATEGORIES, type ModerationScore } from "./moderationScoring";
 
 function ordinal(n: number): string {
   const lastTwo = n % 100;
@@ -46,4 +48,28 @@ export function buildCrossPostAlertBlocks(params: {
   blocks.push(contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]));
 
   return blocks;
+}
+
+export function buildModerationAlertBlocks(params: {
+  authorId: string;
+  channel: string;
+  text: string;
+  permalink: string;
+  context: SlackHistoryMessage[];
+  score: ModerationScore;
+}): Block[] {
+  const contextText =
+    params.context.length === 0
+      ? "_(no preceding context)_"
+      : params.context.map((m) => `<@${m.user}>: ${m.text}`).join("\n");
+
+  const scoreLines = MODERATION_CATEGORIES.map((c) => `${c}: ${params.score.scores[c].toFixed(2)}`).join(" · ");
+
+  return [
+    section(`*Possible harassment/hate flag* (shadow mode — not acted on)\nAuthor: <@${params.authorId}> in <#${params.channel}>`),
+    section(`*Flagged message* (<${params.permalink}|permalink>):\n${params.text}`),
+    section(`*Preceding context:*\n${contextText}`),
+    contextBlock([`Scores — ${scoreLines}`]),
+    contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]),
+  ];
 }
