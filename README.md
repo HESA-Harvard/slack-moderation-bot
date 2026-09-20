@@ -1,14 +1,22 @@
 # HESA Moderation Bot
 
-A Slack app for the Harvard Extension Student Association: report intake (`/report`
-and a flag emoji), moderator alerts, and evidence archiving to a Google Shared
-Drive. Built for Slack's Free plan on Cloudflare Workers.
+A Slack app for the Harvard Extension Student Association. Built for Slack's
+Free plan on Cloudflare Workers. What's live today:
 
-Read `CLAUDE.md` first — it's the authoritative scope document for what's built
-and, just as importantly, what's deliberately left out. `docs/build-spec.md` and
-`docs/moderation-policy.md` cover the full multi-phase design and the
-moderation rules this app supports; this repo currently implements Phase 1
-only (reporting + archiving, no classifier, no action buttons).
+- **Report intake** — `/report` and a flag emoji, moderator alerts to
+  `#mod-alerts`, evidence archiving to a Google Shared Drive
+- **Membership verification** — a Google Form + `#access-queue` approval
+  flow for who gets into the Slack workspace, with annual reconfirmation
+  and a warning on reapplication after a conduct-based removal
+- **Shadow-mode pattern detection** — cross-post/spam detection and Stage 1
+  (OpenAI Moderation API) harassment/hate scoring, both running silently in
+  a private channel for threshold calibration, not yet live to moderators
+
+Read `CLAUDE.md` first — it's the authoritative scope document for what's
+built and, just as importantly, what's deliberately left out (no automated
+enforcement, ever; no DM access; no Stage 2 LLM tiering yet). `docs/
+build-spec.md` and `docs/moderation-policy.md` cover the full multi-phase
+design and the moderation rules this app supports.
 
 This document is written for a successor with no prior context — HESA's
 leadership turns over every year, and there is no dedicated IT staff.
@@ -19,6 +27,7 @@ leadership turns over every year, and there is no dedicated IT staff.
 - A [Cloudflare account](https://dash.cloudflare.com) (free tier is sufficient) and the `wrangler` CLI (installed via `npm install`, no separate setup)
 - A Slack app already created in the HESA workspace at api.slack.com/apps (see "Slack app setup" below)
 - A Google Cloud service account with access to a folder in a Harvard-owned Google Shared Drive (see "Google Drive setup" below)
+- An OpenAI Platform account with a Moderation-scoped API key (see "Stage 1 moderation scoring" below) — no card required to create one, as of this writing
 
 ## Local development
 
@@ -45,7 +54,9 @@ wrangler kv namespace create DEDUPE
 
 wrangler secret put SLACK_SIGNING_SECRET
 wrangler secret put SLACK_BOT_TOKEN
-wrangler secret put GOOGLE_SA_KEY   # the full service-account JSON key, as one line
+wrangler secret put GOOGLE_SA_KEY          # the full service-account JSON key, as one line
+wrangler secret put FORM_INTEGRATION_SECRET # generate your own; must match the Apps Script side too — see "Access requests"
+wrangler secret put OPENAI_API_KEY          # see "Stage 1 moderation scoring"
 
 npm run deploy
 ```
@@ -78,9 +89,10 @@ this still can't reach DMs or private channels.
 **Slash commands:** register `/report`.
 
 **Interactivity:** enable it; handles `view_submission` (the `/report` modal)
-and `block_actions` (the Approve/Request info/Deny buttons on access-queue
-alerts — see "Access requests" below). Phase 1's own alerts are still
-read-only; only the access-queue alerts have buttons.
+and `block_actions` — the Approve/Request info/Deny buttons on access-queue
+alerts (see "Access requests" below), and the "Mark link refreshed" button
+on the invite-link warning (see "Repeat-flag tracking" / invite-link
+tracking above). Phase 1's own `#mod-alerts` alerts are still read-only.
 
 **Request URLs**, all pointing at the deployed Worker:
 - Event Subscriptions: `https://<worker-url>/slack/events`
@@ -508,15 +520,19 @@ required.
 
 ## What's deliberately not here
 
-Per `CLAUDE.md` and later scoping decisions: no Perspective API or LLM
-classifier, no tier assignment, no pile-on/dogpile detection (see "Cross-post
-detection" above for why — it needs real language analysis, not a bigger
-version of the rule-based cross-post detector), no action buttons or triage
-state on `#mod-alerts` itself (the access-queue and cross-post-warning alerts
-do have buttons — that's a separate, later decision), and no digests. These
-are open per `docs/build-spec.md`'s later phases. Screenshot upload in
-`/report` is also omitted for now — reporters are told they can share an
-image with a moderator directly instead of a half-working upload flow.
+Per `CLAUDE.md` and later scoping decisions: **Stage 1 moderation scoring
+exists** (see "Stage 1 moderation scoring" above — OpenAI's Moderation API,
+not Perspective API, which is sunsetting), but **Stage 2 does not** — no LLM
+call, no tier assignment, no context-aware reasoning about a flagged
+message. No pile-on/dogpile detection (see "Cross-post detection" above for
+why — it needs real language analysis, not a bigger version of the
+rule-based cross-post detector), no action buttons or triage state on
+`#mod-alerts` itself (the access-queue and cross-post/moderation-warning
+alerts do have buttons — that's a separate, later decision), and no
+digests. These are open per `docs/build-spec.md`'s later phases. Screenshot
+upload in `/report` is also omitted for now — reporters are told they can
+share an image with a moderator directly instead of a half-working upload
+flow.
 
 Message content *is* now read (`message.channels`, for cross-post detection
 only, shadow mode only) — this was true from early on in this repo's history
@@ -531,6 +547,8 @@ scope of what changed.
 | Cloudflare Workers | Free tier limits (100K requests/day) are far above this workload; a pricing or policy change would require re-evaluating hosting per `docs/build-spec.md` Section 3 |
 | Slack Web API / Events API | Core to the app; a breaking API change would require handler updates |
 | Google Drive API | Archive writes fail loudly (a notice lands in `#mod-alerts` with the full record) rather than silently — see `src/archive/drive.ts` — but a sustained outage or API change needs a human fix |
+| Google Sheets API | Roster writes fail loudly into `#access-queue` the same way (see "Deprovisioning / annual re-review"); a sustained outage or API change needs a human fix, same as Drive |
+| OpenAI Moderation API | Chosen specifically because Google's Perspective API (the build spec's original pick) sunsets December 31, 2026 — see "Stage 1 moderation scoring." Free tier could change; scoring fails open (skips, logs, never blocks message processing) rather than breaking anything if it does |
 | Hono | Thin routing layer; swappable without touching business logic in `src/handlers/` |
 
 ## Architecture

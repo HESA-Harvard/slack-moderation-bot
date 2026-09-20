@@ -8,7 +8,7 @@ Context for a Claude Code session building this project. Read this first. The fu
 
 A Slack app for the Harvard Extension Student Association (HESA), a student government serving enrolled Harvard Extension School students. The workspace is on Slack's **Free plan**, with no Enterprise features, no SSO, and no Workflow Builder.
 
-The app does three things: it accepts reports of problematic conduct, it preserves evidence outside Slack's 90-day retention window, and (in a later phase) it flags possibly harassing messages in public channels for human moderators to review.
+The app accepts reports of problematic conduct and preserves evidence outside Slack's 90-day retention window; flags possibly harassing messages and cross-posted spam in public channels for human moderators to review, in shadow mode; screens membership applications through a moderator approval queue; and supports an annual re-review of who still has access. See Section 3 for what's shipped versus still pending.
 
 **Why it exists.** HES administration has raised concerns about bullying and harassment. Separately, the community is migrating from a \~2,000-member WhatsApp group that is being shut down, so Slack membership will grow quickly.
 
@@ -40,11 +40,11 @@ These were decided deliberately. Do not propose alternatives unless something he
 
 **A constraint worth internalizing:** Slack's Free plan hides messages after 90 days and deletes data after a year. The archive is therefore the only durable record, which is why archive-write failures are treated as critical rather than logged and forgotten.
 
-## 3. Phase 1 scope
+## 3. Phase 1 scope (shipped), and what's been built since
 
-Build only this. It is deliberately small, and it delivers most of the practical value on its own.
+Phase 1 was deliberately small — build only that first — and it shipped as scoped. This section now also records what's been added on top of it, since a lot has: this is no longer a Phase 1 codebase, but Phase 1 is still the foundation everything else sits on, and the constraints in Section 4 apply to all of it equally, not just the original scope.
 
-**In scope**
+**Phase 1 — in scope (shipped)**
 
 1. Request handling with Slack signature verification
 2. `/report` slash command with a modal, including anonymous filing
@@ -53,20 +53,22 @@ Build only this. It is deliberately small, and it delivers most of the practical
 5. Archive writer to the Google Shared Drive
 6. Event deduplication via KV
 
-**Explicitly not in this phase**
+**Built since Phase 1.** Each of these was designed and explicitly approved before being built, the same way Phase 1 was — see git history for the sequence, and the README for full operational detail. None of it relaxes Section 4; in particular none of it takes automated action on a message or a member.
 
-- The Perspective API or any classifier scoring
-- LLM tier assignment
-- Cross-post or pile-on detection
-- Alert action buttons and triage state (alerts are read-only for now)
-- Digests, on-call rotation, auto-dismissal
-- Anything reading `message.channels`
+- **Membership verification (access-queue).** A Google Form plus Apps Script front end relays submissions here, which posts an approval card — Approve / Request info / Deny buttons — to a private `#access-queue` channel. The moderator's decision is relayed back to Apps Script, which emails the applicant, and an Approve also logs the member to a roster spreadsheet.
+- **Deprovisioning / annual re-review.** A separate bound Apps Script (`google-apps-script/access-roster-report.gs`) compares the roster against a yearly reconfirmation Form and produces a "Needs Review" report for a human — it never removes anyone itself, since Slack's Free plan has no removal API anyway. Its `Removed` tab tracks people actually taken off the roster; a prior *conduct* removal (as opposed to a routine lapsed one) now surfaces as a warning on a later reapplication, still purely informational.
+- **Shadow-mode pattern detection.** The app now reads `message.channels`, which supersedes the old "not in this phase" line below — see that paragraph for what changed and why it's still scoped. Two detectors run on it, both currently in shadow mode: findings post to a private channel for moderators to look at, nothing is actioned automatically.
+  - Cross-post/spam detection: near-identical messages posted across channels in a short window.
+  - Stage 1 harassment/hate scoring via the OpenAI Moderation API (free), deliberately scoped to harassment and hate only, excluding e.g. self-harm and sexual content categories.
+- **Unified repeat-flag counter** (`src/repeatFlags.ts`). Tallies flags across all three sources above — member emoji-flag, cross-post, moderation score — per user over a 30-day window, so a moderator sees one combined count and a breakdown by type instead of three separate tallies.
 
-The last point matters: Phase 1 does **not** subscribe to message events at all. The only Slack events consumed are `reaction_added` and interactivity payloads. Message scopes are requested so that the reaction handler can fetch a flagged message and its context, not so that the app can watch the channel.
+**On `message.channels`.** Phase 1 deliberately did not subscribe to message events at all — the only events consumed were `reaction_added` and interactivity payloads, and message scopes existed only so the reaction handler could fetch a flagged message's context, not so the app could watch a channel. That changed for the two shadow-mode detectors above, which do need to see channel messages to do their job. This is still a scoped exception, not a general archive: unflagged message content is not retained past the detection window, no DM or private-channel scope was added, and nothing here takes action on its own — see Section 4's "no automated enforcement" and "minimize retained content." Any further widening of what's read or stored is still an escalation per Section 10.
 
-**Why this order.** Reporting catches the serious cases that a classifier cannot see anyway, since harassment moves to DMs which are invisible to this app by design. Shipping reporting first also means something real is running before the WhatsApp migration brings a large influx.
+**Still not built, on purpose.** LLM tier assignment / a Stage 2 review pass (deferred pending more shadow-mode data), digests, on-call rotation, and auto-dismissal. And permanently, not just "for now": any automated action of any kind — that's a Section 4 hard constraint, not a scope decision that later phases revisit.
 
-**Build sequence within the phase.** Signature verification first, because nothing else is testable without it. Then the archive writer, because everything else depends on records landing. Then `/report`, then the reaction handler, then alert formatting.
+**Why Phase 1 shipped in this order.** Reporting catches the serious cases that a classifier cannot see anyway, since harassment moves to DMs which are invisible to this app by design. Shipping reporting first also meant something real was running before the WhatsApp migration brought a large influx.
+
+**Phase 1 build sequence.** Signature verification first, because nothing else is testable without it. Then the archive writer, because everything else depends on records landing. Then `/report`, then the reaction handler, then alert formatting.
 
 ## 4. Hard constraints
 
