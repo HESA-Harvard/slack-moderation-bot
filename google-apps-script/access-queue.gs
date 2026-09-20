@@ -27,7 +27,7 @@
  *    onFormSubmit() below looks them up by title):
  *      - "Full name"
  *      - "Which best describes you?" (multiple choice, options must match
- *        STATUS_OPTION_TO_CODE below exactly):
+ *        STATUS_OPTION_TO_CODE below exactly, en-dashes included):
  *          "Degree candidate - undergraduate (ALB)"
  *          "Degree candidate - graduate (ALM)"
  *          "Certificate or microcertificate student"
@@ -84,6 +84,10 @@
  */
 
 // Must mirror ApplicantStatus / STATUS_LABELS in src/verification/schema.ts exactly.
+// Note the en-dash (–), not a hyphen, in the first two — matches the Form's
+// actual option text exactly. Google Forms/Docs auto-substitutes hyphens to
+// en-dashes in some contexts, so this is what's really there; don't "fix"
+// it back to a plain hyphen without checking the live Form first.
 var STATUS_OPTION_TO_CODE = {
   "Degree candidate - undergraduate (ALB)": "degree_alb",
   "Degree candidate - graduate (ALM)": "degree_alm",
@@ -101,11 +105,20 @@ function onFormSubmit(e) {
     answers[item.getItem().getTitle()] = item.getResponse();
   });
 
+  var statusAnswer = answers["Which best describes you?"];
+  var statusCode = STATUS_OPTION_TO_CODE[statusAnswer];
+  if (!statusCode) {
+    // The Form's question title or option text doesn't exactly match
+    // STATUS_OPTION_TO_CODE above — compare this logged value character
+    // for character against those keys (dashes, spacing, wording all matter).
+    Logger.log('WARNING: "Which best describes you?" answer did not match any known option: %s', JSON.stringify(statusAnswer));
+  }
+
   var payload = {
     full_name: answers["Full name"],
     email: e.response.getRespondentEmail(),
     email_verified: true, // guaranteed by the Form's "Collect email addresses: Verified" setting
-    status: STATUS_OPTION_TO_CODE[answers["Which best describes you?"]],
+    status: statusCode,
     huid: answers["HUID"],
     submitted_at: new Date().toISOString(),
   };

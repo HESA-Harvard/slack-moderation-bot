@@ -69,6 +69,27 @@ describe("handleVerificationSubmit", () => {
 
     expect(calls[0]!.body).not.toContain("warning");
   });
+
+  it("shows a visible fallback rather than the literal string 'undefined' for an unrecognized status", async () => {
+    // Regression test: a live submission hit this when the Form's option text
+    // drifted out of sync with access-queue.gs's STATUS_OPTION_TO_CODE, and
+    // the alert rendered "*Status:* undefined" verbatim.
+    const calls: { url: string; body: string }[] = [];
+    stubFetch(calls);
+
+    const submission = {
+      full_name: "Alex Kim",
+      email: "alex.kim@gmail.com",
+      email_verified: true,
+      status: undefined as unknown as VerificationSubmission["status"],
+      huid: "11223344",
+      submitted_at: "2026-09-22T10:00:00.000Z",
+    };
+    await handleVerificationSubmit(makeEnv(), submission);
+
+    expect(calls[0]!.body).not.toContain("*Status:* undefined");
+    expect(calls[0]!.body).toContain("unrecognized");
+  });
 });
 
 describe("isVerificationAction", () => {

@@ -9,6 +9,14 @@ export const VERIFY_ACTION_IDS: Record<VerificationAction, string> = {
 
 const HARVARD_EMAIL_DOMAIN = "@g.harvard.edu";
 
+// Falls back visibly rather than rendering the literal string "undefined" —
+// this happens if the Form's "Which best describes you?" option text drifts
+// out of sync with access-queue.gs's STATUS_OPTION_TO_CODE (that script logs
+// a warning to its own Executions log when this happens, for debugging).
+function statusLabel(status: VerificationSubmission["status"]): string {
+  return STATUS_LABELS[status] ?? "(unrecognized — check Form/Apps Script status mapping)";
+}
+
 // Only admitted degree candidates are known to reliably get a g.harvard.edu
 // account — certificate/premedical/course-taker admission doesn't obviously
 // come with one, so they're excluded rather than guessed at. Adjust this set
@@ -23,7 +31,7 @@ const STATUSES_EXPECTED_ON_HARVARD_DOMAIN = new Set<VerificationSubmission["stat
 function domainMismatchWarning(submission: VerificationSubmission): Block | undefined {
   if (!STATUSES_EXPECTED_ON_HARVARD_DOMAIN.has(submission.status)) return undefined;
   if (submission.email.toLowerCase().endsWith(HARVARD_EMAIL_DOMAIN)) return undefined;
-  return contextBlock([`:warning: Claims "${STATUS_LABELS[submission.status]}" but verified email isn't ${HARVARD_EMAIL_DOMAIN}`]);
+  return contextBlock([`:warning: Claims "${statusLabel(submission.status)}" but verified email isn't ${HARVARD_EMAIL_DOMAIN}`]);
 }
 
 export function buildVerificationAlertBlocks(submission: VerificationSubmission): Block[] {
@@ -37,7 +45,7 @@ export function buildVerificationAlertBlocks(submission: VerificationSubmission)
   const details = [
     `*Name:* ${submission.full_name}`,
     `*Email:* ${submission.email}${submission.email_verified ? " (verified)" : " (not verified)"}`,
-    `*Status:* ${STATUS_LABELS[submission.status]}`,
+    `*Status:* ${statusLabel(submission.status)}`,
     `*HUID:* ${submission.huid}`,
   ];
 
