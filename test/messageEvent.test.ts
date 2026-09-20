@@ -128,7 +128,7 @@ describe("handleMessageEvent", () => {
     expect(alertCalls).toHaveLength(2);
     expect(alertCalls[0]!.body).not.toContain("Repeat pattern");
     expect(alertCalls[1]!.body).toContain("Repeat pattern");
-    expect(alertCalls[1]!.body).toContain("2nd cross-post flag");
+    expect(alertCalls[1]!.body).toContain("2 total (2 cross-posts)");
   });
 });
 

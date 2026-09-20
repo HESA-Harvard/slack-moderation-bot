@@ -1,5 +1,6 @@
 import type { IncidentRecord, SlackMessageRef } from "../archive/schema";
 import { DIRECT_MESSAGE_OPTION_VALUE } from "./modal";
+import { RECENT_FLAG_WINDOW_SECONDS, formatFlagSummary, type RecentFlagSummary } from "../repeatFlags";
 
 // Minimal Block Kit typing — enough to build the blocks this app sends, not a full SDK surface.
 export interface Block {
@@ -20,7 +21,7 @@ function contextLines(context: SlackMessageRef[]): string {
   return context.map((m) => `<@${m.user_id}>: ${m.text}`).join("\n");
 }
 
-export function buildIncidentAlertBlocks(record: IncidentRecord, archiveLink?: string): Block[] {
+export function buildIncidentAlertBlocks(record: IncidentRecord, archiveLink?: string, flagSummary?: RecentFlagSummary): Block[] {
   const blocks: Block[] = [
     section(record.source === "report" ? "*New report filed via `/report`*" : "*Message flagged by member (emoji)*"),
   ];
@@ -46,6 +47,13 @@ export function buildIncidentAlertBlocks(record: IncidentRecord, archiveLink?: s
     }
   } else {
     blocks.push(contextBlock([`Flagged by <@${record.reporter_user_id}> (visible to moderators only)`]));
+  }
+
+  // Only ever passed for emoji-sourced incidents — /report has no reliable
+  // user ID for the accused to count against (see repeatFlags.ts).
+  if (flagSummary && flagSummary.total > 1) {
+    const days = RECENT_FLAG_WINDOW_SECONDS / (24 * 60 * 60);
+    blocks.push(contextBlock([`:repeat: Repeat pattern — ${formatFlagSummary(flagSummary)} for this author in the last ${days} days`]));
   }
 
   const incidentLabel = archiveLink ? `<${archiveLink}|Incident ${record.incident_id}>` : `Incident ${record.incident_id}`;

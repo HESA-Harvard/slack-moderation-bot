@@ -1,21 +1,15 @@
 import { section, contextBlock, type Block } from "../slack/blocks";
 import type { SlackHistoryMessage } from "../slack/api";
-import { CROSS_POST_WINDOW_SECONDS, RECENT_FLAG_WINDOW_SECONDS, type CrossPostOccurrence } from "./crossPost";
+import { RECENT_FLAG_WINDOW_SECONDS, formatFlagSummary, type RecentFlagSummary } from "../repeatFlags";
+import { CROSS_POST_WINDOW_SECONDS, type CrossPostOccurrence } from "./crossPost";
 import { MODERATION_CATEGORIES, type ModerationScore } from "./moderationScoring";
 
-function ordinal(n: number): string {
-  const lastTwo = n % 100;
-  if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`;
-  switch (n % 10) {
-    case 1:
-      return `${n}st`;
-    case 2:
-      return `${n}nd`;
-    case 3:
-      return `${n}rd`;
-    default:
-      return `${n}th`;
-  }
+// Only worth a line when it actually shows a pattern — a first-ever flag
+// tells a reviewer nothing they don't already see in the rest of the alert.
+function repeatFlagBlock(summary: RecentFlagSummary): Block | undefined {
+  if (summary.total <= 1) return undefined;
+  const days = RECENT_FLAG_WINDOW_SECONDS / (24 * 60 * 60);
+  return contextBlock([`:repeat: Repeat pattern — ${formatFlagSummary(summary)} for this author in the last ${days} days`]);
 }
 
 export function buildCrossPostAlertBlocks(params: {
@@ -23,7 +17,7 @@ export function buildCrossPostAlertBlocks(params: {
   text: string;
   occurrences: CrossPostOccurrence[];
   permalinks: string[];
-  recentFlagCount: number;
+  flagSummary: RecentFlagSummary;
 }): Block[] {
   const channelLines = params.occurrences
     .map((o, i) => `<#${o.channel}> — <${params.permalinks[i]}|permalink>`)
@@ -36,14 +30,8 @@ export function buildCrossPostAlertBlocks(params: {
     section(`*Posted in ${params.occurrences.length} channels within ${windowMinutes} minutes:*\n${channelLines}`),
   ];
 
-  // Only worth a line when it actually shows a pattern — "1st flag" tells a
-  // reviewer nothing they don't already see above.
-  if (params.recentFlagCount > 1) {
-    const recentFlagWindowDays = RECENT_FLAG_WINDOW_SECONDS / (24 * 60 * 60);
-    blocks.push(
-      contextBlock([`:repeat: Repeat pattern — ${ordinal(params.recentFlagCount)} cross-post flag for this author in the last ${recentFlagWindowDays} days`]),
-    );
-  }
+  const repeatBlock = repeatFlagBlock(params.flagSummary);
+  if (repeatBlock) blocks.push(repeatBlock);
 
   blocks.push(contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]));
 
@@ -57,6 +45,7 @@ export function buildModerationAlertBlocks(params: {
   permalink: string;
   context: SlackHistoryMessage[];
   score: ModerationScore;
+  flagSummary: RecentFlagSummary;
 }): Block[] {
   const contextText =
     params.context.length === 0
@@ -65,11 +54,17 @@ export function buildModerationAlertBlocks(params: {
 
   const scoreLines = MODERATION_CATEGORIES.map((c) => `${c}: ${params.score.scores[c].toFixed(2)}`).join(" · ");
 
-  return [
+  const blocks: Block[] = [
     section(`*Possible harassment/hate flag* (shadow mode — not acted on)\nAuthor: <@${params.authorId}> in <#${params.channel}>`),
     section(`*Flagged message* (<${params.permalink}|permalink>):\n${params.text}`),
     section(`*Preceding context:*\n${contextText}`),
     contextBlock([`Scores — ${scoreLines}`]),
-    contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]),
   ];
+
+  const repeatBlock = repeatFlagBlock(params.flagSummary);
+  if (repeatBlock) blocks.push(repeatBlock);
+
+  blocks.push(contextBlock([`Shadow mode — for threshold calibration only · ${new Date().toISOString()}`]));
+
+  return blocks;
 }

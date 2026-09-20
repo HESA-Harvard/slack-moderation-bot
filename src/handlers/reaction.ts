@@ -3,6 +3,7 @@ import { writeArchiveRecord, type ArchiveEnv } from "../archive/drive";
 import { buildIncidentAlertBlocks } from "../slack/blocks";
 import { fetchMessageWithContext, getPermalink, postMessage } from "../slack/api";
 import { claimAlert, nextIncidentId } from "../dedupe";
+import { recordFlag } from "../repeatFlags";
 
 const CONTEXT_MESSAGE_COUNT = 3;
 
@@ -47,8 +48,13 @@ export async function handleReactionAdded(env: ReactionEnv, event: ReactionAdded
     context: context.map((m) => ({ user_id: m.user, ts: m.ts, text: m.text })),
   };
 
-  const archiveLink = await writeArchiveRecord(env, record);
+  const [archiveLink, flagSummary] = await Promise.all([
+    writeArchiveRecord(env, record),
+    // Tracked against the flagged message's author, not the reactor — the
+    // repeat count is about whose conduct keeps getting flagged.
+    recordFlag(env.DEDUPE, message.user, "member_flag"),
+  ]);
 
-  const blocks = buildIncidentAlertBlocks(record, archiveLink);
+  const blocks = buildIncidentAlertBlocks(record, archiveLink, flagSummary);
   await postMessage(env.SLACK_BOT_TOKEN, env.MOD_ALERTS_CHANNEL, blocks, `Message flagged: incident ${incidentId}`);
 }

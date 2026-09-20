@@ -1,7 +1,8 @@
 import { postMessage, getPermalink, fetchMessageWithContext } from "../slack/api";
-import { hashMessageText, recordCrossPost, recordRepeatFlag, MIN_MESSAGE_LENGTH } from "../patterns/crossPost";
+import { hashMessageText, recordCrossPost, MIN_MESSAGE_LENGTH } from "../patterns/crossPost";
 import { scoreMessage } from "../patterns/moderationScoring";
 import { buildCrossPostAlertBlocks, buildModerationAlertBlocks } from "../patterns/blocks";
+import { recordFlag } from "../repeatFlags";
 
 export interface MessageEnv {
   DEDUPE: KVNamespace;
@@ -57,11 +58,11 @@ async function checkCrossPost(env: MessageEnv, event: MessageChannelsEvent, text
   const { shouldAlert, occurrences } = await recordCrossPost(env.DEDUPE, event.user!, hash, event.channel, event.ts);
   if (!shouldAlert) return;
 
-  const [permalinks, recentFlagCount] = await Promise.all([
+  const [permalinks, flagSummary] = await Promise.all([
     Promise.all(occurrences.map((o) => getPermalink(env.SLACK_BOT_TOKEN, o.channel, o.ts))),
-    recordRepeatFlag(env.DEDUPE, event.user!),
+    recordFlag(env.DEDUPE, event.user!, "cross_post"),
   ]);
-  const blocks = buildCrossPostAlertBlocks({ authorId: event.user!, text, occurrences, permalinks, recentFlagCount });
+  const blocks = buildCrossPostAlertBlocks({ authorId: event.user!, text, occurrences, permalinks, flagSummary });
   await postMessage(
     env.SLACK_BOT_TOKEN,
     env.SHADOW_ALERTS_CHANNEL,
@@ -74,11 +75,12 @@ async function checkModeration(env: MessageEnv, event: MessageChannelsEvent, tex
   const score = await scoreMessage(env.OPENAI_API_KEY, text);
   if (!score?.flagged) return;
 
-  const [permalink, { context }] = await Promise.all([
+  const [permalink, { context }, flagSummary] = await Promise.all([
     getPermalink(env.SLACK_BOT_TOKEN, event.channel, event.ts),
     fetchMessageWithContext(env.SLACK_BOT_TOKEN, event.channel, event.ts, MODERATION_CONTEXT_MESSAGE_COUNT),
+    recordFlag(env.DEDUPE, event.user!, "moderation_flag"),
   ]);
-  const blocks = buildModerationAlertBlocks({ authorId: event.user!, channel: event.channel, text, permalink, context, score });
+  const blocks = buildModerationAlertBlocks({ authorId: event.user!, channel: event.channel, text, permalink, context, score, flagSummary });
   await postMessage(
     env.SLACK_BOT_TOKEN,
     env.SHADOW_ALERTS_CHANNEL,

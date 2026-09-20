@@ -228,13 +228,10 @@ messages set `unfurl_links: false` (see `src/slack/api.ts`) so Slack doesn't
 turn every permalink into its own preview card — otherwise an author hitting
 many channels would produce an enormous alert.
 
-**Repeat-flag count.** Alongside the burst detector above, `recordRepeatFlag`
-tracks how many times each author has *triggered an alert* (not just posted
-a message) over a rolling 30 days. When an author's count is 2 or higher,
-the alert gets an extra line: "Repeat pattern — Nth cross-post flag for this
-author in the last 30 days." This is deliberately just visible context for
-a human, never an automated escalation — see "What's deliberately not here"
-for why that boundary matters here specifically, not just as a general rule.
+**Repeat-flag count.** Alongside the burst detector above, every cross-post
+alert also shows how often this author has been flagged recently — see
+"Repeat-flag tracking" below, which covers the shared mechanism used across
+all three detectors that can identify a flagged author, not just this one.
 
 **Why shadow mode, not live.** Per `docs/build-spec.md`'s own phasing, running
 silently in a channel only the Director of Technology (and maybe one
@@ -262,16 +259,8 @@ harder problem, likely bundled with a future classifier phase rather than
 built standalone.
 
 Also deliberately not here: any kind of automated "N strikes" escalation for
-repeat offenders — CLAUDE.md's "no automated enforcement, ever" rules out an
-automated action, but this specifically isn't a fit even as a severity bump.
-`docs/moderation-policy.md` Section 5 already defines repeat-offender
-handling ("a prior *finding* at any tier within 12 months" as an aggravating
-factor), and a finding is a moderator's adjudicated decision, not a raw
-detector flag — conflating the two would let this heuristic quietly drive
-outcomes the policy reserves for humans. Unsolicited-promotion posting is
-also explicitly a Tier 0 example in that same section, HESA's mildest
-category, handled with an informal redirect or DM. The repeat-flag count
-above is as far as this goes: visible context for a human, nothing more.
+repeat offenders — see "Repeat-flag tracking" below for the reasoning, which
+applies across every detector, not just this one.
 
 **Setup:**
 - Create a private shadow-alerts channel and invite the bot (not covered by
@@ -331,6 +320,45 @@ guarantee, so a quiet skip is the proportionate response here.
 account (no card required to create one, as of this writing). No new
 channel or event subscription needed; this runs inside the same
 `message.channels` handler as cross-post detection.
+
+## Repeat-flag tracking
+
+`src/repeatFlags.ts` — shared by cross-post detection, the flag-emoji
+handler, and Stage 1 moderation scoring. Every time one of these produces an
+alert, it also records the flagged author against a rolling 30-day counter,
+broken out by type (`cross_post`, `member_flag`, `moderation_flag`). Once an
+author's total crosses 1, every subsequent alert about them — regardless of
+which of the three detectors produced it — gets an extra line: *"Repeat
+pattern — 4 total (2 cross-posts, 1 member flag, 1 content flag) for this
+author in the last 30 days."* Tracked once per **alert**, never per message,
+so a single burst or a single flagged message only ever counts once.
+
+**Why `/report` isn't included.** Its "who was involved" field is
+deliberately free text, not a user picker — CLAUDE.md is explicit this
+avoids making the form feel like "an accusation machine." That means there's
+no reliable Slack user ID to count against for report-sourced incidents. A
+moderator reading a report needs to notice a name match themselves; it
+can't be automatic, and this app doesn't try to guess.
+
+**Why this stops at a visible count, not an automated escalation.**
+CLAUDE.md's "no automated enforcement, ever" rules out an automated action,
+but this specifically isn't a fit even as a severity bump: `docs/
+moderation-policy.md` Section 5 already defines repeat-offender handling
+("a prior *finding* at any tier within 12 months" as an aggravating
+factor), and a finding is a moderator's adjudicated decision, not a raw
+detector flag. Conflating the two would let this heuristic quietly drive
+outcomes the policy reserves for humans. Unsolicited-promotion posting is
+also explicitly a Tier 0 example in that same section, HESA's mildest
+category, handled with an informal redirect or DM. The count is as far as
+this goes: visible context for a human, nothing more.
+
+**One channel-split caveat.** `member_flag` counts come from `reaction.ts`,
+whose alerts go to `#mod-alerts` (moderators already watch this); `cross_post`
+and `moderation_flag` counts come from shadow-mode-only detectors whose
+alerts land in the private shadow channel. The count itself is unified
+across all three regardless of source, but the underlying incidents a
+moderator would want to actually read are still split across two channels
+until cross-post/moderation scoring graduate out of shadow mode.
 
 ## Configuration reference
 
@@ -408,6 +436,7 @@ src/
     moderationScoring.ts        OpenAI Moderation API client (Stage 1)
     blocks.ts                     shadow-mode alert Block Kit
   crypto.ts                  toHex — shared by request verification and cross-post hashing
+  repeatFlags.ts              unified repeat-flag counter (cross-post + member-flag + moderation)
   dedupe.ts                  KV helpers: event dedup, alert dedup, incident ids
 test/                       unit tests + recorded Slack payload fixtures
 google-apps-script/         Apps Script source (not deployed by wrangler — see

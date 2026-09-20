@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:test";
-import { hashMessageText, recordCrossPost, recordRepeatFlag, CROSS_POST_CHANNEL_THRESHOLD } from "../src/patterns/crossPost";
+import { hashMessageText, recordCrossPost, CROSS_POST_CHANNEL_THRESHOLD } from "../src/patterns/crossPost";
 
 describe("hashMessageText", () => {
   it("normalizes case and whitespace so equivalent text hashes the same", async () => {
@@ -53,21 +53,5 @@ describe("recordCrossPost", () => {
     await recordCrossPost(env.DEDUPE, "U_AUTHOR_A", hash, "C1", "1.1");
     const other = await recordCrossPost(env.DEDUPE, "U_AUTHOR_B", hash, "C1", "2.1");
     expect(other.occurrences).toHaveLength(1); // not 2 — different author, different key
-  });
-});
-
-describe("recordRepeatFlag", () => {
-  it("counts up across separate calls for the same author", async () => {
-    const first = await recordRepeatFlag(env.DEDUPE, "U_REPEAT1");
-    const second = await recordRepeatFlag(env.DEDUPE, "U_REPEAT1");
-    const third = await recordRepeatFlag(env.DEDUPE, "U_REPEAT1");
-    expect([first, second, third]).toEqual([1, 2, 3]);
-  });
-
-  it("tracks different authors independently", async () => {
-    await recordRepeatFlag(env.DEDUPE, "U_REPEAT2");
-    await recordRepeatFlag(env.DEDUPE, "U_REPEAT2");
-    const other = await recordRepeatFlag(env.DEDUPE, "U_REPEAT3");
-    expect(other).toBe(1);
   });
 });
