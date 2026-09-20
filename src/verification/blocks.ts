@@ -1,6 +1,7 @@
 import { section, contextBlock, type Block } from "../slack/blocks";
 import { STATUS_LABELS, type VerificationAction, type VerificationButtonPayload, type VerificationSubmission } from "./schema";
 import type { PriorRemoval } from "./priorRemoval";
+import type { PriorDenials } from "./priorDenial";
 
 export const VERIFY_ACTION_IDS: Record<VerificationAction, string> = {
   approve: "verify_approve",
@@ -35,7 +36,7 @@ function domainMismatchWarning(submission: VerificationSubmission): Block | unde
   return contextBlock([`:warning: Claims "${statusLabel(submission.status)}" but verified email isn't ${HARVARD_EMAIL_DOMAIN}`]);
 }
 
-export function buildVerificationAlertBlocks(submission: VerificationSubmission, priorRemoval?: PriorRemoval): Block[] {
+export function buildVerificationAlertBlocks(submission: VerificationSubmission, priorRemoval?: PriorRemoval, priorDenials?: PriorDenials): Block[] {
   const payload: VerificationButtonPayload = {
     full_name: submission.full_name,
     email: submission.email,
@@ -65,6 +66,15 @@ export function buildVerificationAlertBlocks(submission: VerificationSubmission,
           `\nDo not approve without review — see the "Removed" tab in the roster spreadsheet.`,
       ),
     );
+  }
+
+  // Below the (more serious) conduct-removal warning, if both apply. Neutral
+  // icon and phrasing deliberately, unlike priorRemoval above: a denial alone
+  // doesn't imply misconduct (Deny captures no reason), so this is "here's
+  // some context," not a red flag — see priorDenial.ts.
+  if (priorDenials) {
+    const times = priorDenials.count === 1 ? "once" : `${priorDenials.count} times`;
+    blocks.push(contextBlock([`:information_source: Applied before and was denied ${times}, most recently ${priorDenials.mostRecentAt}`]));
   }
 
   blocks.push(section(details.join("\n")));

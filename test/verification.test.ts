@@ -182,6 +182,69 @@ describe("handleVerificationSubmit", () => {
     expect(alertCall!.body).not.toContain("Previously removed");
   });
 
+  it("warns when the applicant has prior denials on record", async () => {
+    const calls: { url: string; body: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("oauth2.googleapis.com/token")) {
+          return new Response(JSON.stringify({ access_token: "fake-token", expires_in: 3600 }), { status: 200 });
+        }
+        if (url.includes("sheets.googleapis.com") && url.includes("Denials")) {
+          return new Response(
+            JSON.stringify({
+              values: [
+                ["email", "denied_at", "denied_by", "full_name"],
+                ["jamie.rivera@gmail.com", "2026-06-01T00:00:00.000Z", "U0MOD1", "Jamie Rivera"],
+                ["jamie.rivera@gmail.com", "2026-08-14T00:00:00.000Z", "U0MOD2", "Jamie Rivera"],
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("sheets.googleapis.com")) {
+          return new Response(JSON.stringify({ values: [] }), { status: 200 });
+        }
+        calls.push({ url, body: String(init?.body ?? "") });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    const submission: VerificationSubmission = {
+      full_name: "Jamie Rivera",
+      email: "jamie.rivera@gmail.com",
+      email_verified: true,
+      status: "course_taker",
+      huid: "12345678",
+      submitted_at: "2026-09-22T10:00:00.000Z",
+    };
+    await handleVerificationSubmit(await makeEnv(), submission);
+
+    const alertCall = calls.find((c) => c.url.includes("chat.postMessage"));
+    expect(alertCall).toBeDefined();
+    expect(alertCall!.body).toContain("Applied before and was denied 2 times");
+    expect(alertCall!.body).toContain("2026-08-14");
+  });
+
+  it("does not warn when the applicant has no prior denials", async () => {
+    const calls: { url: string; body: string }[] = [];
+    stubFetch(calls);
+
+    const submission: VerificationSubmission = {
+      full_name: "Sam Lee",
+      email: "sam.lee@gmail.com",
+      email_verified: true,
+      status: "course_taker",
+      huid: "87654321",
+      submitted_at: "2026-09-22T10:00:00.000Z",
+    };
+    await handleVerificationSubmit(await makeEnv(), submission);
+
+    const alertCall = calls.find((c) => c.url.includes("chat.postMessage"));
+    expect(alertCall!.body).not.toContain("Applied before and was denied");
+  });
+
   it("still posts the alert even if the Removed-tab read fails", async () => {
     const calls: { url: string; body: string }[] = [];
     vi.stubGlobal(
@@ -269,7 +332,29 @@ describe("handleVerificationAction", () => {
     expect(rosterCall!.body).toContain("U0MOD");
   });
 
-  it("does not write to the roster on Deny or Request info", async () => {
+  it("does not write to the roster on Request info", async () => {
+    const calls: { url: string; body: string }[] = [];
+    stubFetch(calls);
+
+    const payload = {
+      type: "block_actions" as const,
+      user: { id: "U0MOD" },
+      channel: { id: "C0ACCESS" },
+      message: { ts: "1.1", blocks: [] },
+      actions: [
+        {
+          action_id: "verify_more_info",
+          value: JSON.stringify({ full_name: "Jamie Rivera", email: "jamie@g.harvard.edu", status: "degree_alm", huid: "12345678" }),
+        },
+      ],
+    };
+
+    await handleVerificationAction(await makeEnv(), payload);
+
+    expect(calls.some((c) => c.url.includes("sheets.googleapis.com"))).toBe(false);
+  });
+
+  it("writes a row to the Denials tab, not Approvals, on Deny", async () => {
     const calls: { url: string; body: string }[] = [];
     stubFetch(calls);
 
@@ -288,6 +373,11 @@ describe("handleVerificationAction", () => {
 
     await handleVerificationAction(await makeEnv(), payload);
 
-    expect(calls.some((c) => c.url.includes("sheets.googleapis.com"))).toBe(false);
+    const rosterCall = calls.find((c) => c.url.includes("sheets.googleapis.com"));
+    expect(rosterCall).toBeDefined();
+    expect(rosterCall!.url).toContain("Denials");
+    expect(rosterCall!.url).not.toContain("Approvals");
+    expect(rosterCall!.body).toContain("jamie@g.harvard.edu");
+    expect(rosterCall!.body).toContain("U0MOD");
   });
 });

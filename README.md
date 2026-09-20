@@ -440,6 +440,19 @@ is untouched.
   kind of person this system expects to see reapply later, and isn't
   flagged. `notes` is free text, e.g. a reference to the relevant
   moderation-incident archive record.
+- **`Denials` tab** (created automatically on first use) — `email,
+  denied_at, denied_by, full_name`, appended by the Worker via
+  `appendRosterRow` on every Deny click, same pattern as `Approvals`. Unlike
+  `Removed`, this is not hand-maintained and carries no `reason_category`:
+  Deny is a single click with no reason captured, so a denial could be
+  conduct-related or purely administrative (unverifiable info, missing
+  HUID) — there's no way to tell which from this alone. When a new
+  application's email has prior rows here, the alert gets a neutral
+  "Applied before and was denied N times, most recently `<date>`" note —
+  informational only, phrased deliberately unlike the `Removed` warning,
+  since a denial alone doesn't imply misconduct. Exists to catch someone
+  quietly resubmitting the Form hoping for a different reviewer, not to
+  penalize anyone for having been denied once.
 - **`Needs Review` tab** — generated on demand by `google-apps-script/
   access-roster-report.gs`, a script bound to the spreadsheet itself (not a
   Cloudflare Cron Trigger — this runs once a year, so scheduling
@@ -454,17 +467,18 @@ is untouched.
 
 **A warning on new applications too, not just the annual report.** When a
 new access-queue application comes in (`handleVerificationSubmit`, see
-"Access requests" above), the Worker now reads `Removed` (via
-`readRosterRows` in `src/archive/drive.ts` — the same `spreadsheets` scope
-already covers reading, not just the appends described below) and checks
-the applicant's email against it. A `conduct` removal on record adds a
-prominent warning to the top of the `#access-queue` alert — who removed
-them, when, and any notes — so a moderator can't miss it before clicking
-Approve. This is deliberately a **warning, not a block**: CLAUDE.md's "no
+"Access requests" above), the Worker now reads both `Removed` and `Denials`
+(via `readRosterRows` in `src/archive/drive.ts` — the same `spreadsheets`
+scope already covers reading, not just the appends described below) and
+checks the applicant's email against each. A `conduct` removal on record
+adds a prominent warning to the top of the `#access-queue` alert — who
+removed them, when, and any notes — so a moderator can't miss it before
+clicking Approve; prior `Denials` rows add a milder, neutral note instead
+(see above). This is deliberately a **warning, not a block**: CLAUDE.md's "no
 automated enforcement, ever" means the app can inform a human but never
-decide on its own that someone can't reapply. The read fails open (returns
-no rows, so no warning) rather than retrying on error — this powers a
-nice-to-have warning, not something that should ever hold up the alert from
+decide on its own that someone can't reapply. Both reads fail open (return
+no rows, so no warning) rather than retrying on error — these power
+nice-to-have warnings, not something that should ever hold up the alert from
 posting if Sheets is briefly unavailable.
 
 **A real scope widening, flagged rather than silently made.** Writing to
@@ -576,6 +590,7 @@ src/
     formsClient.ts              callback to the Apps Script Web App
     inviteLinkGuard.ts            use-count tracking + refresh warning
     priorRemoval.ts                Removed-tab lookup for the conduct-removal warning
+    priorDenial.ts                 Denials-tab lookup for the repeat-denial note
   patterns/
     crossPost.ts              hashing + KV tracking + threshold logic
     moderationScoring.ts        OpenAI Moderation API client (Stage 1)

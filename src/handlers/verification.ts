@@ -6,6 +6,7 @@ import { buildVerificationAlertBlocks, buildStatusLineBlock, VERIFY_ACTION_IDS }
 import { notifyFormsCallback } from "../verification/formsClient";
 import { recordInviteLinkUse, type InviteLinkGuardEnv } from "../verification/inviteLinkGuard";
 import { findConductRemoval, REMOVED_TAB } from "../verification/priorRemoval";
+import { findPriorDenials, DENIALS_TAB } from "../verification/priorDenial";
 import type { VerificationAction, VerificationButtonPayload, VerificationSubmission } from "../verification/schema";
 
 export interface VerificationEnv extends InviteLinkGuardEnv {
@@ -19,10 +20,14 @@ const APPROVALS_TAB = "Approvals";
 
 /** New Google Form row, relayed by Apps Script. Caller has already ack'd; runs in waitUntil. */
 export async function handleVerificationSubmit(env: VerificationEnv, submission: VerificationSubmission): Promise<void> {
-  const removedRows = await readRosterRows(env, env.ACCESS_ROSTER_SHEET_ID, REMOVED_TAB);
+  const [removedRows, denialsRows] = await Promise.all([
+    readRosterRows(env, env.ACCESS_ROSTER_SHEET_ID, REMOVED_TAB),
+    readRosterRows(env, env.ACCESS_ROSTER_SHEET_ID, DENIALS_TAB),
+  ]);
   const priorRemoval = findConductRemoval(removedRows, submission.email);
+  const priorDenials = findPriorDenials(denialsRows, submission.email);
 
-  const blocks = buildVerificationAlertBlocks(submission, priorRemoval);
+  const blocks = buildVerificationAlertBlocks(submission, priorRemoval, priorDenials);
   await postMessage(env.SLACK_BOT_TOKEN, env.ACCESS_QUEUE_CHANNEL, blocks, `New access request: ${submission.full_name}`);
 }
 
@@ -54,6 +59,8 @@ export async function handleVerificationAction(env: VerificationEnv, payload: Bl
   if (action === "approve") {
     await recordInviteLinkUse(env);
     await recordApproval(env, applicant, payload.user.id);
+  } else if (action === "deny") {
+    await recordDenial(env, applicant, payload.user.id);
   }
 
   const updatedBlocks = [...payload.message.blocks, buildStatusLineBlock(action, payload.user.id)];
@@ -87,5 +94,33 @@ async function recordApproval(env: VerificationEnv, applicant: VerificationButto
       section(`\`\`\`${JSON.stringify(row)}\`\`\``),
     ],
     `ROSTER WRITE FAILED for ${approvalId} — add manually`,
+  );
+}
+
+/**
+ * Appends the denial to the roster spreadsheet's Denials tab — a plain log
+ * used only to warn a moderator if the same email applies again (see
+ * priorDenial.ts). Lower-severity failure handling than recordApproval: this
+ * isn't the durable "who has access" record the reconfirmation system
+ * depends on, just a nice-to-have, so a failure still gets a visible notice
+ * but not the loudest icon.
+ */
+async function recordDenial(env: VerificationEnv, applicant: VerificationButtonPayload, moderatorUserId: string): Promise<void> {
+  const deniedAt = new Date().toISOString();
+  const row = [applicant.email, deniedAt, moderatorUserId, applicant.full_name];
+
+  const ok = await appendRosterRow(env, env.ACCESS_ROSTER_SHEET_ID, DENIALS_TAB, row);
+  if (ok) return;
+
+  await postMessage(
+    env.SLACK_BOT_TOKEN,
+    env.ACCESS_QUEUE_CHANNEL,
+    [
+      section(
+        `:warning: *Denial-log write failed for ${applicant.email}*\nCould not append this denial to the roster spreadsheet automatically. Add this row to the "${DENIALS_TAB}" tab manually if useful:`,
+      ),
+      section(`\`\`\`${JSON.stringify(row)}\`\`\``),
+    ],
+    `Denial-log write failed for ${applicant.email} — add manually if useful`,
   );
 }
