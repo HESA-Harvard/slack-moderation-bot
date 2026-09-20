@@ -32,4 +32,5 @@ export interface VerificationButtonPayload {
   full_name: string;
   email: string;
   status: ApplicantStatus;
+  huid: string;
 }

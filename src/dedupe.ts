@@ -28,3 +28,18 @@ export async function nextIncidentId(kv: KVNamespace, now: Date = new Date()): P
   await kv.put(key, String(next));
   return `${year}-${String(next).padStart(4, "0")}`;
 }
+
+/**
+ * Sequential per-year access-approval id, e.g. "ACCESS-2026-0001" — a
+ * separate counter from nextIncidentId so approval records (membership
+ * roster) and moderation incidents never share numbering. Same best-effort
+ * concurrency tradeoff as nextIncidentId.
+ */
+export async function nextApprovalId(kv: KVNamespace, now: Date = new Date()): Promise<string> {
+  const year = now.getUTCFullYear();
+  const key = `access-counter:${year}`;
+  const current = Number((await kv.get(key)) ?? "0");
+  const next = current + 1;
+  await kv.put(key, String(next));
+  return `ACCESS-${year}-${String(next).padStart(4, "0")}`;
+}

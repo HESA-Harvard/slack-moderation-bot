@@ -360,6 +360,131 @@ across all three regardless of source, but the underlying incidents a
 moderator would want to actually read are still split across two channels
 until cross-post/moderation scoring graduate out of shadow mode.
 
+## Deprovisioning / annual re-review
+
+The Slack workspace is only supposed to be open to current HES students, and
+that isn't a one-time fact for anyone — course-taker/certificate/premedical
+eligibility is explicitly term-bound, but degree candidates (ALB/ALM) also
+graduate, withdraw, or otherwise stop being current students. Every approved
+member goes through the same annual reconfirmation; none are exempted by
+category.
+
+**No API can automate the actual removal.** `admin.users.remove` requires a
+paid Slack plan; this workspace is on Free. Removal is a manual step via
+Slack's own member-management UI, same structural limitation as the invite
+side (`admin.users.invite`, see "Access requests" above) — there's simply no
+programmatic path on a non-Enterprise plan. Everything below produces a
+*report* for a human to act on, never an action itself.
+
+**The roster: a spreadsheet, not per-record files.** Unlike the moderation
+archive (one JSON file per incident, per CLAUDE.md Section 8), access
+approvals are written as rows in a single Google Sheet, **"HESA Access
+Roster."** The reason is specific to what this data is for: the whole point
+is diffing two lists (who was approved vs. who reconfirmed) once a year,
+which a spreadsheet does naturally and a folder of JSON files doesn't. This
+only applies to access-approval tracking — the moderation-incident archive
+is untouched.
+
+- **`Approvals` tab** — one row per Approve click (`approval_id,
+  approved_at, full_name, email, status, huid, approved_by`), appended by
+  the Worker via `appendRosterRow` in `src/archive/drive.ts`. Retries like
+  the archive writer; on total failure it posts the row into `#access-queue`
+  instead of losing it silently, rather than the Drive archive's dedicated
+  failure-notice Block Kit (this is a simpler, plain-text notice — the
+  record type doesn't need its own builder for something this small).
+- **`Reconfirmations` tab** — the "HESA Slack Annual Reconfirmation" Form's
+  own response destination. Point that Form at this same spreadsheet
+  (Responses → Sheets icon → "Select existing spreadsheet") rather than
+  letting it create its own, and rename the tab it creates to
+  `Reconfirmations`. This needs **no custom code at all** — Google Forms
+  populates it natively. That Form reuses the same email-verification and
+  "Which best describes you?" question as the original application Form; no
+  separate Yes/No question is needed, since submitting the form at all *is*
+  the reconfirmation. **Responses accumulate forever, with no year boundary
+  of their own** — the report only counts a response as valid for the
+  current cycle if its (Forms-provided, automatic) Timestamp falls within
+  the last `RECONFIRMATION_WINDOW_DAYS` (330 days) — otherwise reconfirming
+  once would incorrectly count for every year after it, forever.
+- **`Removed` tab** (create it the first time someone's actually removed) —
+  `email, removed_at, removed_by, reason_category, notes`, hand-maintained.
+  `Approvals` is append-only and never edited (previous bullet), so without
+  this, someone already removed from Slack would just keep reappearing in
+  `Needs Review` forever, every single year, since their email will never
+  show up in `Reconfirmations` either — there's no one left to submit it.
+  Add a row here whenever you actually remove someone and future reports
+  skip them. The comparison is **date-aware, not just presence-based**: it
+  compares each person's *most recent* approval against their most recent
+  removal, so a later legitimate re-approval (through the normal
+  access-queue flow, after the removal date) correctly un-suppresses them
+  again — deleting rows from `Approvals` or `Removed` to work around this
+  was considered and deliberately rejected, since it would break
+  `Approvals`' append-only audit trail for a case this date comparison
+  already handles. **Removal is always checked before reconfirmation, not
+  after** — a self-service `Reconfirmations` submission (nobody reviews it)
+  can never clear a removal on its own; only a fresh moderator approval can.
+  `reason_category` is `conduct` or `lapsed`: only `conduct` removals
+  trigger the warning described below when that email applies again — a
+  `lapsed` removal (graduated, withdrew, didn't reconfirm) is exactly the
+  kind of person this system expects to see reapply later, and isn't
+  flagged. `notes` is free text, e.g. a reference to the relevant
+  moderation-incident archive record.
+- **`Needs Review` tab** — generated on demand by `google-apps-script/
+  access-roster-report.gs`, a script bound to the spreadsheet itself (not a
+  Cloudflare Cron Trigger — this runs once a year, so scheduling
+  infrastructure wasn't worth adding). Adds a "HESA Tools → Generate
+  Reconfirmation Report" menu item to the Sheet; a moderator clicks it after
+  the reconfirmation window closes, and it lists every approved member —
+  degree candidates included — whose email doesn't appear in
+  `Reconfirmations` and isn't already recorded in `Removed`. The tab opens
+  with a banner explaining what it is, when it ran, and how many
+  already-removed members were excluded — meant to be self-explanatory
+  without reading this file, including a year from now.
+
+**A warning on new applications too, not just the annual report.** When a
+new access-queue application comes in (`handleVerificationSubmit`, see
+"Access requests" above), the Worker now reads `Removed` (via
+`readRosterRows` in `src/archive/drive.ts` — the same `spreadsheets` scope
+already covers reading, not just the appends described below) and checks
+the applicant's email against it. A `conduct` removal on record adds a
+prominent warning to the top of the `#access-queue` alert — who removed
+them, when, and any notes — so a moderator can't miss it before clicking
+Approve. This is deliberately a **warning, not a block**: CLAUDE.md's "no
+automated enforcement, ever" means the app can inform a human but never
+decide on its own that someone can't reapply. The read fails open (returns
+no rows, so no warning) rather than retrying on error — this powers a
+nice-to-have warning, not something that should ever hold up the alert from
+posting if Sheets is briefly unavailable.
+
+**A real scope widening, flagged rather than silently made.** Writing to
+Sheets needs the `spreadsheets` OAuth scope in addition to the existing
+`drive.file` scope on the same service account (see `src/archive/drive.ts`).
+This is additive to an already-trusted credential, not a new one — and
+actual access is still gated by explicitly sharing *this one spreadsheet*
+with the service account's email, the same "least privilege via explicit
+sharing" pattern as the Drive archive folder. The broader OAuth scope only
+grants the *ability* to call Sheets API methods; it doesn't grant access to
+any spreadsheet that happens to exist.
+
+**The announcement is a process, not a feature.** A single pinned post in
+`#general` (or a dedicated announcements channel) once a year, linking to
+the reconfirmation Form, with a deadline — no `@channel`, no automation. DMs
+aren't an option (see CLAUDE.md's "never request DM scopes"), and Slack's
+ephemeral messages don't reliably reach someone who isn't actively viewing
+the channel at that exact moment, so a public pinned post is the actual
+reliable option here, not a shortcut.
+
+**Setup:**
+- Create the "HESA Access Roster" spreadsheet with an `Approvals` tab
+  (headers: `approval_id, approved_at, full_name, email, status, huid,
+  approved_by`) and share it with the service account's email as Editor.
+- Set `ACCESS_ROSTER_SHEET_ID` in `wrangler.toml` (from the spreadsheet's
+  URL).
+- Create the "HESA Slack Annual Reconfirmation" Form (reusing the email and
+  status questions from the original Form), pointed at this spreadsheet as
+  its response destination, tab renamed to `Reconfirmations`.
+- Paste `google-apps-script/access-roster-report.gs` in as the spreadsheet's
+  bound script (Extensions → Apps Script, from within the Sheet itself).
+
 ## Configuration reference
 
 | Name | Kind | Where set | What it is |
@@ -375,7 +500,8 @@ until cross-post/moderation scoring graduate out of shadow mode.
 | `FORM_INTEGRATION_SECRET` | secret | `wrangler secret put` | Shared secret with Apps Script — both directions, see "Access requests" |
 | `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private shadow-mode channel (cross-post + moderation scoring) |
 | `OPENAI_API_KEY` | secret | `wrangler secret put` | OpenAI API key, for Stage 1 moderation scoring |
-| `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id counter, cached Google access token, cross-post tracking |
+| `ACCESS_ROSTER_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Access Roster" — see "Deprovisioning / annual re-review" |
+| `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id + approval-id counters, cached Google access token, cross-post tracking |
 
 Rotating any secret is `wrangler secret put NAME` again — no code change
 required.
@@ -421,16 +547,17 @@ src/
     report.ts             /report slash command + modal submission
     reaction.ts             flag-emoji reaction handling
     channelCreated.ts        auto-joins new public channels
-    verification.ts           access-queue submit + button handling
+    verification.ts           access-queue submit + button handling + roster row
     messageEvent.ts             message.channels dispatch (cross-post + moderation scoring)
   archive/
     schema.ts               incident record types
-    drive.ts                  Google auth + Drive writes, with failure fallback
+    drive.ts                  Google auth + Drive writes + roster Sheet appends, with failure fallback
   verification/
     schema.ts                access-request types
     blocks.ts                  #access-queue alert + status-line Block Kit
     formsClient.ts              callback to the Apps Script Web App
     inviteLinkGuard.ts            use-count tracking + refresh warning
+    priorRemoval.ts                Removed-tab lookup for the conduct-removal warning
   patterns/
     crossPost.ts              hashing + KV tracking + threshold logic
     moderationScoring.ts        OpenAI Moderation API client (Stage 1)
@@ -440,5 +567,9 @@ src/
   dedupe.ts                  KV helpers: event dedup, alert dedup, incident ids
 test/                       unit tests + recorded Slack payload fixtures
 google-apps-script/         Apps Script source (not deployed by wrangler — see
-                             "Access requests" above)
+                             "Access requests" and "Deprovisioning" above).
+                             access-queue.gs is bound to the application Form;
+                             access-roster-report.gs is bound to the roster
+                             spreadsheet itself — two separate Apps Script
+                             projects, not one.
 ```

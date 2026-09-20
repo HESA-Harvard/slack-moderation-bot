@@ -22,6 +22,7 @@ export interface Env {
   FORM_INTEGRATION_SECRET: string;
   SHADOW_ALERTS_CHANNEL: string;
   OPENAI_API_KEY: string;
+  ACCESS_ROSTER_SHEET_ID: string;
 }
 
 type Variables = { rawBody: string };

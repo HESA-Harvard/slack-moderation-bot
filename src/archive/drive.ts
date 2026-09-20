@@ -5,7 +5,14 @@ import { fetchWithTimeout } from "../http";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 // supportsAllDrives is required or the API 404s on any file/folder living in a Shared Drive.
 const DRIVE_UPLOAD_ENDPOINT = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true";
-const SCOPE = "https://www.googleapis.com/auth/drive.file";
+const SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
+// drive.file: moderation-archive JSON files, scoped to files this app creates.
+// spreadsheets: the access-approval roster — see appendRosterRow. Widened
+// deliberately from the original drive.file-only scope; actual access to any
+// given spreadsheet still requires it to be explicitly shared with this
+// service account, same "least privilege via explicit sharing" pattern as
+// the Drive archive folder.
+const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets";
 const TOKEN_CACHE_KEY = "google:access_token";
 const TOKEN_REFRESH_SKEW_SECONDS = 60;
 
@@ -177,4 +184,80 @@ export async function writeArchiveRecord(env: ArchiveEnv, record: IncidentRecord
     console.error(`FAILURE NOTICE ALSO FAILED for incident ${record.incident_id}`, err, JSON.stringify(record));
   }
   return undefined;
+}
+
+/**
+ * Appends one row to a tab in the access-approval roster spreadsheet via the
+ * Sheets API — see README "Deprovisioning / annual re-review" for why this
+ * is a shared spreadsheet rather than per-record files like the moderation
+ * archive above: the whole point is diffing two lists later, which a
+ * spreadsheet does far more naturally than a folder of JSON files.
+ *
+ * Returns whether it succeeded rather than throwing or handling failure
+ * itself — unlike writeArchiveRecord, this has no fixed Slack channel to
+ * post a failure notice to (callers vary), so that's left to the caller.
+ */
+export async function appendRosterRow(
+  env: Pick<ArchiveEnv, "DEDUPE" | "GOOGLE_SA_KEY">,
+  sheetId: string,
+  tab: string,
+  row: (string | number)[],
+): Promise<boolean> {
+  for (const delay of [0, ...RETRY_DELAYS_MS]) {
+    if (delay > 0) await sleep(delay);
+    try {
+      const token = await getAccessToken(env.DEDUPE, env.GOOGLE_SA_KEY);
+      const range = encodeURIComponent(`${tab}!A:Z`);
+      const res = await fetchWithTimeout(
+        `${SHEETS_API_BASE}/${sheetId}/values/${range}:append?valueInputOption=USER_ENTERED`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [row] }),
+        },
+        DRIVE_FETCH_TIMEOUT_MS,
+      );
+      if (!res.ok) {
+        throw new Error(`Sheets append failed: ${res.status} ${await res.text()}`);
+      }
+      return true;
+    } catch (err) {
+      console.error("roster append attempt failed", err);
+    }
+  }
+
+  console.error("ROSTER APPEND FAILED PERMANENTLY", tab, JSON.stringify(row));
+  return false;
+}
+
+/**
+ * Reads all rows (including the header row) from a tab in the roster
+ * spreadsheet — used to check an applicant's email against prior removals
+ * before a new access request is reviewed. Fails open (returns []) rather
+ * than retrying: this powers a nice-to-have warning, not something that
+ * should ever hold up the access-queue alert from posting if Sheets is
+ * briefly unavailable — unlike appendRosterRow, losing this isn't losing a
+ * record, just a warning that would otherwise have been shown.
+ */
+export async function readRosterRows(
+  env: Pick<ArchiveEnv, "DEDUPE" | "GOOGLE_SA_KEY">,
+  sheetId: string,
+  tab: string,
+): Promise<string[][]> {
+  try {
+    const token = await getAccessToken(env.DEDUPE, env.GOOGLE_SA_KEY);
+    const range = encodeURIComponent(`${tab}!A:Z`);
+    const res = await fetchWithTimeout(`${SHEETS_API_BASE}/${sheetId}/values/${range}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.error("roster read failed", res.status, await res.text());
+      return [];
+    }
+    const body = (await res.json()) as { values?: string[][] };
+    return body.values ?? [];
+  } catch (err) {
+    console.error("roster read threw", err);
+    return [];
+  }
 }

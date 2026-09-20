@@ -1,5 +1,6 @@
 import { section, contextBlock, type Block } from "../slack/blocks";
 import { STATUS_LABELS, type VerificationAction, type VerificationButtonPayload, type VerificationSubmission } from "./schema";
+import type { PriorRemoval } from "./priorRemoval";
 
 export const VERIFY_ACTION_IDS: Record<VerificationAction, string> = {
   approve: "verify_approve",
@@ -34,11 +35,12 @@ function domainMismatchWarning(submission: VerificationSubmission): Block | unde
   return contextBlock([`:warning: Claims "${statusLabel(submission.status)}" but verified email isn't ${HARVARD_EMAIL_DOMAIN}`]);
 }
 
-export function buildVerificationAlertBlocks(submission: VerificationSubmission): Block[] {
+export function buildVerificationAlertBlocks(submission: VerificationSubmission, priorRemoval?: PriorRemoval): Block[] {
   const payload: VerificationButtonPayload = {
     full_name: submission.full_name,
     email: submission.email,
     status: submission.status,
+    huid: submission.huid,
   };
   const buttonValue = JSON.stringify(payload);
 
@@ -49,7 +51,23 @@ export function buildVerificationAlertBlocks(submission: VerificationSubmission)
     `*HUID:* ${submission.huid}`,
   ];
 
-  const blocks: Block[] = [section("*New HESA Slack access request*"), section(details.join("\n"))];
+  const blocks: Block[] = [section("*New HESA Slack access request*")];
+
+  // Deliberately the very first thing after the header — this is the one
+  // fact a reviewer must not miss, and never an automated block: CLAUDE.md
+  // rules out the app taking action on a member itself, so this only
+  // ensures a human can't approve without seeing it.
+  if (priorRemoval) {
+    blocks.push(
+      section(
+        `:rotating_light: *Previously removed for conduct* — removed ${priorRemoval.removedAt} by <@${priorRemoval.removedBy}>.` +
+          (priorRemoval.notes ? `\n${priorRemoval.notes}` : "") +
+          `\nDo not approve without review — see the "Removed" tab in the roster spreadsheet.`,
+      ),
+    );
+  }
+
+  blocks.push(section(details.join("\n")));
 
   const warning = domainMismatchWarning(submission);
   if (warning) blocks.push(warning);
