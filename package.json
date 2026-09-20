@@ -10,21 +10,26 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.6.0",
-    "@cloudflare/workers-types": "^4.20250913.0",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260919.1",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "wrangler": "^3.90.0"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.135.0"
   },
   "dependencies": {
     "hono": "^4.6.0"
   },
+  "overrides": {
+    "sharp": "^0.35.4"
+  },
   "allowScripts": {
-    "esbuild@0.17.19": true,
-    "esbuild@0.21.5": true,
-    "sharp@0.33.5": true,
-    "workerd@1.20250204.0": true,
-    "workerd@1.20250718.0": true,
+    "esbuild@0.28.1": true,
+    "sharp@0.35.4": true,
+    "workerd@1.20260815.1": true,
+    "workerd@1.20260918.1": true,
     "fsevents@2.3.3": true
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
