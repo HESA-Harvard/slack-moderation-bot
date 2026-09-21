@@ -21,6 +21,9 @@ function stubFetch(capture: { driveBody?: string; slackCalls: { url: string; bod
         capture.driveBody = String(init?.body ?? "");
         return new Response(JSON.stringify({ id: "file123" }), { status: 200 });
       }
+      if (url.includes("sheets.googleapis.com")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       if (url.includes("slack.com/api/")) {
         capture.slackCalls.push({ url, body: String(init?.body ?? "") });
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
@@ -41,6 +44,7 @@ describe("handleReportSubmission", () => {
       ARCHIVE_FOLDER_ID: "folder123",
       SLACK_BOT_TOKEN: "xoxb-test",
       MOD_ALERTS_CHANNEL: "C0MOD",
+      INCIDENT_LOG_SHEET_ID: "incidents123",
     };
 
     // fixture's file_as = "anonymous"

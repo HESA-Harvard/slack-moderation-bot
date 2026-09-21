@@ -155,6 +155,7 @@ export interface ArchiveEnv {
   ARCHIVE_FOLDER_ID: string;
   SLACK_BOT_TOKEN: string;
   MOD_ALERTS_CHANNEL: string;
+  INCIDENT_LOG_SHEET_ID: string;
 }
 
 /**

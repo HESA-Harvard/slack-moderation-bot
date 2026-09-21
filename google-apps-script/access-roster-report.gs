@@ -52,13 +52,15 @@
  *        flagged.
  *      notes — free text, e.g. a reference to the moderation-incident
  *        archive record this removal was based on.
- * 6. "Denials" tab — you'll see this appear on its own, written automatically
- *    by the Worker (recordDenial in src/handlers/verification.ts) on every
- *    Deny click in #access-queue. It plays no part in this script or the
- *    Needs Review report — it's a separate, lighter-weight log used only to
- *    show a neutral "applied before and was denied" note on a later
- *    reapplication (src/verification/priorDenial.ts). Nothing to set up;
- *    mentioned here only so it isn't a mystery tab later.
+ * 6. "Denials" tab — create it once, empty, with just the header row (email,
+ *    denied_at, denied_by, full_name) — the Sheets API errors on a missing
+ *    tab rather than creating one, so this does NOT appear on its own.
+ *    Written automatically after that by the Worker (recordDenial in
+ *    src/handlers/verification.ts) on every Deny click in #access-queue. It
+ *    plays no part in this script or the Needs Review report — it's a
+ *    separate, lighter-weight log used only to show a neutral "applied
+ *    before and was denied" note on a later reapplication
+ *    (src/verification/priorDenial.ts).
  *
  * This only ever produces a report for a human to review — it never removes
  * anyone or changes access itself, and never decides who gets approved

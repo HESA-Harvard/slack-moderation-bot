@@ -11,6 +11,7 @@ ACCESS_QUEUE_CHANNEL = "C0C28U1KGJK"
 FORM_CALLBACK_URL = "https://script.google.com/a/macros/g.harvard.edu/s/AKfycbz_G1xXGo7LvPGfuW3pkPQzcg5xF3j_qcc608WvDxdgjDzPiVFlQqku6EtHsOe1kq8n/exec"
 SHADOW_ALERTS_CHANNEL = "C0C40TXNKJ4"
 ACCESS_ROSTER_SHEET_ID = "1BRlJNFpi-2UM_u44zAJZKVYYxsQH2i-qJV2CRYpAKCY"
+INCIDENT_LOG_SHEET_ID = "1iMlECUghMot9W2rkxUWPgvCevOuVQZtoyR2O9Wk-8X8"
 
 [[kv_namespaces]]
 binding = "DEDUPE"

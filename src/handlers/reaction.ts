@@ -1,5 +1,6 @@
 import type { EmojiIncidentRecord } from "../archive/schema";
 import { writeArchiveRecord, type ArchiveEnv } from "../archive/drive";
+import { logIncident } from "../archive/incidentLog";
 import { buildIncidentAlertBlocks } from "../slack/blocks";
 import { fetchMessageWithContext, getPermalink, postMessage } from "../slack/api";
 import { claimAlert, nextIncidentId } from "../dedupe";
@@ -54,6 +55,7 @@ export async function handleReactionAdded(env: ReactionEnv, event: ReactionAdded
     // repeat count is about whose conduct keeps getting flagged.
     recordFlag(env.DEDUPE, message.user, "member_flag"),
   ]);
+  await logIncident(env, record, archiveLink);
 
   const blocks = buildIncidentAlertBlocks(record, archiveLink, flagSummary);
   await postMessage(env.SLACK_BOT_TOKEN, env.MOD_ALERTS_CHANNEL, blocks, `Message flagged: incident ${incidentId}`);

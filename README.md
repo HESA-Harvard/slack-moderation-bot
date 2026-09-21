@@ -129,6 +129,22 @@ hasn't joined.
 Keep a break-glass copy of the service-account key in HESA's password vault.
 Rotate it, along with the Slack secrets, at every leadership transition.
 
+**Incident log spreadsheet** (separate from the archive folder above, and
+separate from the "HESA Access Roster" spreadsheet — see "Incident log"
+below for why): create a new Google Sheet, e.g. **"HESA Moderation Incident
+Log,"** in the same restricted Drive folder as the evidence files, share it
+with the service account's email (Editor), restrict sharing to the
+Moderation Team and HESA President per `docs/moderation-policy.md` Section
+8, then put its ID (from its URL) into `INCIDENT_LOG_SHEET_ID` in
+`wrangler.toml`. **Create the `Incidents` tab yourself, empty, with the
+header row before the first incident**: `incident_id, date_opened, source,
+channel, flagged_user_id, reporter_user_id, anonymous, archive_link,
+tier_assigned, moderators_involved, action_taken, referred_to_hes,
+date_closed` (also exported as `INCIDENT_LOG_HEADER` in
+`src/archive/incidentLog.ts`) — the Sheets API's `values.append` errors on a
+tab that doesn't exist rather than creating one, same caveat as `Denials`
+above.
+
 ## Access requests (membership verification)
 
 The Slack workspace is open to current HES students only — degree-seeking
@@ -372,6 +388,57 @@ across all three regardless of source, but the underlying incidents a
 moderator would want to actually read are still split across two channels
 until cross-post/moderation scoring graduate out of shadow mode.
 
+## Incident log
+
+A gap between two different systems: the 30-day flag counter above tracks
+raw, unreviewed detector flags; `docs/moderation-policy.md`'s Section 5
+aggravating factor ("a prior *finding* at any tier within **12 months**")
+requires an adjudicated moderator decision, over a much longer window. Until
+this was built, the only record of past incidents was a folder of
+per-incident JSON files in Drive with no way to filter by member — a
+moderator trying to honor the 12-month rule had to search Drive by hand or
+rely on memory across a moderator term, which undercuts Section 8's own
+point that "continuity lives in the incident log... not in individuals."
+
+**What it is.** `src/archive/incidentLog.ts` — a row appended to a
+spreadsheet (`INCIDENT_LOG_SHEET_ID`, `Incidents` tab) every time `/report`
+or the flag emoji creates an incident, alongside (not instead of) the
+existing JSON evidence file. Called from both `handleReportSubmission` and
+`handleReactionAdded`, right after `writeArchiveRecord`.
+
+**What's in the row, and what isn't.** `incident_id, date_opened, source,
+channel, flagged_user_id, reporter_user_id, anonymous, archive_link` are
+filled in automatically from what the bot already knows at flag time.
+`tier_assigned, moderators_involved, action_taken, referred_to_hes,
+date_closed` — the fields `docs/moderation-policy.md` Section 9 actually
+specifies for its incident log — are left **blank for a moderator to fill in
+by hand**, the same pattern as the roster's `Removed` tab, since there's no
+button/modal flow on `#mod-alerts` to capture a decision automatically
+(alerts are read-only, per `CLAUDE.md`). No message text or report
+narrative is written here — that's the JSON file's job, linked via
+`archive_link`; duplicating it into a second, more widely-filterable sheet
+is exactly the "just in case" content `CLAUDE.md`'s "minimize retained
+content" rules out.
+
+**The one real limitation this doesn't fix.** For `/report`-sourced
+incidents, `flagged_user_id` is usually blank — same reason as the 30-day
+counter above: "who was involved" is free text, not a picker, so there's
+often no reliable id to key on. A moderator checking someone's history still
+needs to notice a name match in `report_text` (in the JSON file) themselves
+for those. Emoji-flagged incidents always have a `flagged_user_id`, since
+they reference a specific message.
+
+**Failure handling.** Best-effort, like `recordDenial` for the roster: if
+the sheet write fails, a `:warning:`-marked notice with the row data posts
+to `#mod-alerts` so a human can add it manually. The JSON evidence file
+(already written by `writeArchiveRecord` at this point) remains the actual
+record either way — losing this row is a tracking gap, not lost evidence.
+
+**Setup:** see "Google Drive (archive) setup" above for creating the
+spreadsheet and the `Incidents` tab. Reuses the existing `spreadsheets`
+OAuth scope already granted to the service account for the Access Roster —
+no new scope widening.
+
 ## Deprovisioning / annual re-review
 
 The Slack workspace is only supposed to be open to current HES students, and
@@ -440,8 +507,11 @@ is untouched.
   kind of person this system expects to see reapply later, and isn't
   flagged. `notes` is free text, e.g. a reference to the relevant
   moderation-incident archive record.
-- **`Denials` tab** (created automatically on first use) — `email,
-  denied_at, denied_by, full_name`, appended by the Worker via
+- **`Denials` tab** (create it once, empty, with just the header row —
+  `email, denied_at, denied_by, full_name` — before the first Deny click;
+  the Sheets API's `values.append` errors on a tab that doesn't exist yet
+  rather than creating one, so this doesn't appear on its own) — appended to
+  by the Worker via
   `appendRosterRow` on every Deny click, same pattern as `Approvals`. Unlike
   `Removed`, this is not hand-maintained and carries no `reason_category`:
   Deny is a single click with no reason captured, so a denial could be
@@ -527,6 +597,7 @@ reliable option here, not a shortcut.
 | `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private shadow-mode channel (cross-post + moderation scoring) |
 | `OPENAI_API_KEY` | secret | `wrangler secret put` | OpenAI API key, for Stage 1 moderation scoring |
 | `ACCESS_ROSTER_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Access Roster" — see "Deprovisioning / annual re-review" |
+| `INCIDENT_LOG_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Moderation Incident Log" — see "Incident log" |
 | `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id + approval-id counters, cached Google access token, cross-post tracking |
 
 Rotating any secret is `wrangler secret put NAME` again — no code change
@@ -584,6 +655,7 @@ src/
   archive/
     schema.ts               incident record types
     drive.ts                  Google auth + Drive writes + roster Sheet appends, with failure fallback
+    incidentLog.ts             Incidents-tab row per incident, for the 12-month prior-finding lookup
   verification/
     schema.ts                access-request types
     blocks.ts                  #access-queue alert + status-line Block Kit

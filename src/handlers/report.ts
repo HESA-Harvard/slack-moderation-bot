@@ -1,5 +1,6 @@
 import type { IncidentRecord } from "../archive/schema";
 import { writeArchiveRecord, type ArchiveEnv } from "../archive/drive";
+import { logIncident } from "../archive/incidentLog";
 import { buildIncidentAlertBlocks } from "../slack/blocks";
 import { listChannels, openView, postEphemeral, postMessage } from "../slack/api";
 import { buildReportModal, DIRECT_MESSAGE_OPTION_VALUE, REPORT_CALLBACK_ID } from "../slack/modal";
@@ -84,6 +85,7 @@ export async function handleReportSubmission(env: ReportEnv, payload: ViewSubmis
   };
 
   const archiveLink = await writeArchiveRecord(env, record);
+  await logIncident(env, record, archiveLink);
 
   const blocks = buildIncidentAlertBlocks(record, archiveLink);
   await postMessage(env.SLACK_BOT_TOKEN, env.MOD_ALERTS_CHANNEL, blocks, `New report: incident ${incidentId}`);

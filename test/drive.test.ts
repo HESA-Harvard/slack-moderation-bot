@@ -52,6 +52,7 @@ describe("writeArchiveRecord", () => {
         ARCHIVE_FOLDER_ID: "folder123",
         SLACK_BOT_TOKEN: "xoxb-test",
         MOD_ALERTS_CHANNEL: "C0MOD",
+        INCIDENT_LOG_SHEET_ID: "incidents123",
       };
 
       await writeArchiveRecord(archiveEnv, record);

@@ -23,6 +23,7 @@ export interface Env {
   SHADOW_ALERTS_CHANNEL: string;
   OPENAI_API_KEY: string;
   ACCESS_ROSTER_SHEET_ID: string;
+  INCIDENT_LOG_SHEET_ID: string;
 }
 
 type Variables = { rawBody: string };

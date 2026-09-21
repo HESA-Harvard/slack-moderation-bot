@@ -41,6 +41,9 @@ function stubFetch(postCount: { alerts: number }) {
         postCount.alerts += 1;
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       }
+      if (url.includes("sheets.googleapis.com")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
       throw new Error(`unexpected fetch to ${url}`);
     }),
   );
@@ -54,6 +57,7 @@ async function makeReactionEnv(): Promise<ReactionEnv> {
     SLACK_BOT_TOKEN: "xoxb-test",
     MOD_ALERTS_CHANNEL: "C0MOD",
     FLAG_EMOJI: "flag-for-review",
+    INCIDENT_LOG_SHEET_ID: "incidents123",
   };
 }
 
