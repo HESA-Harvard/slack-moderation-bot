@@ -276,7 +276,12 @@ function sendReconfirmationReminders() {
       muteHttpExceptions: true, // so a per-recipient failure doesn't abort the rest of the list
     });
 
-    if (response.getResponseCode() === 200) {
+    // access-queue.gs's doPost has no way to return a real HTTP status code —
+    // ContentService responses are always 200, success or not — so the
+    // response TEXT is the only way to tell "ok" apart from "unauthorized" /
+    // "unknown action" / "bad request". Checking getResponseCode() alone
+    // (as this used to) can never detect a failure from this endpoint.
+    if (response.getContentText() === "ok") {
       sent++;
     } else {
       failed++;

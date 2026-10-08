@@ -656,7 +656,15 @@ existing Web App keeps every applicant-facing email coming from the same
 - Create the "HESA Slack Annual Reconfirmation" Qualtrics survey (reusing
   the same HarvardKey SSO Authenticator mapping as the application survey),
   with a Web Service task POSTing to the Worker's
-  `POST /forms/reconfirmation-submit`.
+  `POST /forms/reconfirmation-submit`. Keep the "Which best describes you?"
+  question (for Qualtrics' own category breakdown — nothing downstream reads
+  it from this survey, `ReconfirmationSubmission` only carries `full_name`,
+  `email`, `submitted_at`) and the community-guidelines consent checkbox
+  (a renewed acknowledgment of the *current* guidelines, not just whatever
+  version existed when someone first joined — also survey-only, never read
+  by the Worker). Drop the HUID question — it doesn't change year to year
+  and is already on file from the original application, so re-collecting it
+  annually is friction with no benefit.
 - Paste `google-apps-script/access-roster-report.gs` in as the spreadsheet's
   bound script (Extensions → Apps Script, from within the Sheet itself).
 - On that same bound script's Project Settings → Script Properties, add

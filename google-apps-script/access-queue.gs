@@ -187,9 +187,13 @@ function doPost(e) {
   MailApp.sendEmail({
     to: body.email,
     replyTo: props.getProperty("REPLY_TO_EMAIL"),
-    name: "HESA", // MailApp always sends as the account executing the script (whatever
-    // that is), and can't change the actual From address — this just makes it display
-    // as "HESA <that-account>" instead of the account's raw name/address.
+    name: "HESA", // MailApp always sends as the account executing the script, and can't
+    // change the actual From address. This is meant to make it display as "HESA
+    // <that-account>" instead of the account's raw name — but confirmed in practice
+    // (2026-10) that Harvard's Workspace admin settings override this and show the
+    // account's real directory name regardless. Left in since it's harmless and costs
+    // nothing, but don't rely on it. Reply-To (below) is what actually keeps replies
+    // durable across officer turnover — that part works as intended.
     subject: emailContent.subject,
     body: emailContent.body,
   });
