@@ -5,9 +5,10 @@ Free plan on Cloudflare Workers. What's live today:
 
 - **Report intake** — `/report` and a flag emoji, moderator alerts to
   `#mod-alerts`, evidence archiving to a Google Shared Drive
-- **Membership verification** — a Google Form + `#access-queue` approval
-  flow for who gets into the Slack workspace, with annual reconfirmation
-  and a warning on reapplication after a conduct-based removal
+- **Membership verification** — a HarvardKey-SSO-gated Qualtrics survey +
+  `#access-queue` approval flow for who gets into the Slack workspace, with
+  annual reconfirmation and a warning on reapplication after a
+  conduct-based removal
 - **Shadow-mode pattern detection** — cross-post/spam detection and Stage 1
   (OpenAI Moderation API) harassment/hate scoring, both running silently in
   a private channel for threshold calibration, not yet live to moderators
@@ -27,6 +28,7 @@ leadership turns over every year, and there is no dedicated IT staff.
 - A [Cloudflare account](https://dash.cloudflare.com) (free tier is sufficient) and the `wrangler` CLI (installed via `npm install`, no separate setup)
 - A Slack app already created in the HESA workspace at api.slack.com/apps (see "Slack app setup" below)
 - A Google Cloud service account with access to a folder in a Harvard-owned Google Shared Drive (see "Google Drive setup" below)
+- A Harvard Qualtrics account, with the HarvardKey SSO integration already provisioned by Harvard IT (see "Access requests" below) — set up by Harvard, not something this project configures
 - An OpenAI Platform account with a Moderation-scoped API key (see "Stage 1 moderation scoring" below) — no card required to create one, as of this writing
 
 ## Local development
@@ -158,40 +160,49 @@ invite someone to a non-Enterprise workspace — `admin.users.invite` is
 Enterprise Grid only, and the old `users.admin.invite` needs a legacy token
 type Slack no longer issues. So sending the actual invite has to happen
 somewhere else: a Google Apps Script project, `google-apps-script/access-queue.gs`,
-sends applicant emails via `MailApp` (free, no new account). It is **not**
-deployed by `wrangler` — copy it into script.google.com per the setup
-comment at the top of that file.
+sends applicant emails via `MailApp` (free, no new account). It isn't bound
+to a Form or Sheet — it's a standalone Web App that only ever receives a
+callback from the Worker — and it is **not** deployed by `wrangler`; copy it
+into script.google.com per the setup comment at the top of that file.
 
 **Flow:**
-1. Applicant submits the Google Form (HESA-controlled account, not personal).
-   Required question titles and options are listed in `access-queue.gs`'s
-   header comment — Apps Script looks them up by exact title/option text, so
-   the Form's "Which best describes you?" options must match
-   `STATUS_OPTION_TO_CODE` there exactly (and `ApplicantStatus`/
-   `STATUS_LABELS` in `src/verification/schema.ts` — the two must stay in
-   sync by hand, there's no shared source of truth across the Apps
-   Script/TypeScript boundary). The Form does **not** ask for email as a
-   typed question; Form Settings → Responses → "Collect email addresses" →
-   **Verified** is turned on instead, so the email is tied to the
-   respondent's signed-in Google account rather than being self-typed text.
-   (Only admitted degree candidates reliably have a `g.harvard.edu` account
-   — other categories often use a personal Gmail — so the Form is not
-   domain-restricted; the alert instead flags a mismatch for the reviewer on
-   the two degree-candidate options only, see below.) The multiple-choice
-   question also means the Form's own "Responses" summary tab gives HESA a
-   free breakdown of applicant categories — no extra plumbing needed for
-   that. The Form also has a required "Community guidelines & access"
-   checkbox; that one is Form-only, never read by Apps Script or the Worker
-   — its record is the Form's own response log.
-2. Apps Script's `onFormSubmit` trigger relays the row to the Worker's
-   `POST /forms/verification-submit`, authenticated with a shared secret
-   (`FORM_INTEGRATION_SECRET`) — not a Slack signature, since this request
-   doesn't come from Slack.
+1. Applicant submits a Qualtrics survey, gated behind Harvard's HarvardKey
+   SSO (an **SSO Authenticator** element in the survey flow, not Qualtrics'
+   org-level admin SSO) — every HES student, admitted or course-taker, has a
+   HarvardKey, so reaching the survey at all already proves current Harvard
+   affiliation, which is a categorically stronger signal than anything a
+   self-service form can provide on its own. Qualtrics' "Field From SSO" →
+   embedded-data mapping pulls `full_name` and `email` straight from the
+   HarvardKey login (confirmed working attribute names: `firstName`/
+   `lastName`, and `email`/`mail` both work and return the same value) — the
+   applicant never types either one. HUID is **not** released by Harvard's
+   SSO integration to this app (confirmed by testing several plausible
+   attribute names, including `netId`), so it stays a self-typed survey
+   question with Qualtrics-side format validation; a later Harvard IT change
+   to release it via SSO would need no Worker-side change, since
+   `VerificationSubmission` doesn't distinguish how a field was obtained.
+   "Which best describes you?" is still a self-reported multiple-choice
+   question — Qualtrics' own response analytics give HESA the same
+   breakdown of applicant categories the old Form gave for free. Its options
+   must match `ApplicantStatus`/`STATUS_LABELS` in
+   `src/verification/schema.ts` exactly, the same hand-kept-in-sync
+   requirement the Form had (there's still no shared source of truth across
+   the survey/TypeScript boundary, just a different survey tool). Keep a
+   required "Community guidelines & access" consent question too; that one
+   is survey-only, never read by the Worker — its record is Qualtrics' own
+   response log.
+2. A **Web Service task** in the survey's Qualtrics Workflow (fires on
+   survey completion) relays the response to the Worker's
+   `POST /forms/verification-submit`, with the shared secret
+   (`FORM_INTEGRATION_SECRET`) sent as a custom header (`X-Form-Secret`) —
+   not a Slack signature, since this request doesn't come from Slack.
 3. The Worker posts an alert to `#access-queue` (`ACCESS_QUEUE_CHANNEL`)
    with **Approve / Request info / Deny** buttons. A degree-seeking claim
    paired with a non-`g.harvard.edu` email gets a visible warning on the
    alert — a hint for the reviewer, never an automatic block, since a
-   legitimate course-taker commonly lacks that domain.
+   legitimate course-taker commonly lacks that domain, and now a more
+   trustworthy hint than before, since the email itself is SSO-confirmed
+   rather than self-typed.
 4. A moderator clicks one of the three buttons. None of them are terminal —
    clicking one appends a status line to the alert (`chat.update`) but
    leaves all three buttons live, since a "Request info" reply might lead to
@@ -471,19 +482,26 @@ is untouched.
   instead of losing it silently, rather than the Drive archive's dedicated
   failure-notice Block Kit (this is a simpler, plain-text notice — the
   record type doesn't need its own builder for something this small).
-- **`Reconfirmations` tab** — the "HESA Slack Annual Reconfirmation" Form's
-  own response destination. Point that Form at this same spreadsheet
-  (Responses → Sheets icon → "Select existing spreadsheet") rather than
-  letting it create its own, and rename the tab it creates to
-  `Reconfirmations`. This needs **no custom code at all** — Google Forms
-  populates it natively. That Form reuses the same email-verification and
-  "Which best describes you?" question as the original application Form; no
-  separate Yes/No question is needed, since submitting the form at all *is*
-  the reconfirmation. **Responses accumulate forever, with no year boundary
-  of their own** — the report only counts a response as valid for the
-  current cycle if its (Forms-provided, automatic) Timestamp falls within
-  the last `RECONFIRMATION_WINDOW_DAYS` (330 days) — otherwise reconfirming
-  once would incorrectly count for every year after it, forever.
+- **`Reconfirmations` tab** (create it once, empty, with just a header row
+  containing "email" and "timestamp" somewhere in it — the Sheets API
+  errors on a missing tab rather than creating one, same caveat as
+  `Denials`) — populated by the Worker via `appendRosterRow` in
+  `src/handlers/reconfirmation.ts`, one row per response to a second,
+  separate Qualtrics survey ("HESA Slack Annual Reconfirmation"), also
+  HarvardKey-SSO-gated, reusing the same `full_name`/`email` SSO mapping as
+  the application survey. No separate Yes/No question is needed, since
+  submitting the survey at all *is* the reconfirmation — and being
+  SSO-gated means someone whose HarvardKey has lapsed (graduated, withdrew,
+  lost HES affiliation) can't actually complete it at all, which makes
+  "didn't reconfirm" a meaningfully stronger signal than "didn't bother"
+  compared to a self-service Google Form. Its own Workflow has a Web
+  Service task POSTing to the Worker's `POST /forms/reconfirmation-submit`,
+  same shared-secret header scheme as the application survey. **Responses
+  accumulate forever, with no year boundary of their own** — the report
+  only counts a response as valid for the current cycle if its timestamp
+  falls within the last `RECONFIRMATION_WINDOW_DAYS` (330 days) — otherwise
+  reconfirming once would incorrectly count for every year after it,
+  forever.
 - **`Removed` tab** (create it the first time someone's actually removed) —
   `email, removed_at, removed_by, reason_category, notes`, hand-maintained.
   `Approvals` is append-only and never edited (previous bullet), so without
@@ -563,7 +581,7 @@ any spreadsheet that happens to exist.
 
 **The announcement is a process, not a feature.** A single pinned post in
 `#general` (or a dedicated announcements channel) once a year, linking to
-the reconfirmation Form, with a deadline — no `@channel`, no automation. DMs
+the reconfirmation survey, with a deadline — no `@channel`, no automation. DMs
 aren't an option (see CLAUDE.md's "never request DM scopes"), and Slack's
 ephemeral messages don't reliably reach someone who isn't actively viewing
 the channel at that exact moment, so a public pinned post is the actual
@@ -575,9 +593,12 @@ reliable option here, not a shortcut.
   approved_by`) and share it with the service account's email as Editor.
 - Set `ACCESS_ROSTER_SHEET_ID` in `wrangler.toml` (from the spreadsheet's
   URL).
-- Create the "HESA Slack Annual Reconfirmation" Form (reusing the email and
-  status questions from the original Form), pointed at this spreadsheet as
-  its response destination, tab renamed to `Reconfirmations`.
+- Add a `Reconfirmations` tab to that same spreadsheet, empty except for a
+  header row containing "email" and "timestamp" somewhere in it.
+- Create the "HESA Slack Annual Reconfirmation" Qualtrics survey (reusing
+  the same HarvardKey SSO Authenticator mapping as the application survey),
+  with a Web Service task POSTing to the Worker's
+  `POST /forms/reconfirmation-submit`.
 - Paste `google-apps-script/access-roster-report.gs` in as the spreadsheet's
   bound script (Extensions → Apps Script, from within the Sheet itself).
 
@@ -633,6 +654,7 @@ scope of what changed.
 | Slack Web API / Events API | Core to the app; a breaking API change would require handler updates |
 | Google Drive API | Archive writes fail loudly (a notice lands in `#mod-alerts` with the full record) rather than silently — see `src/archive/drive.ts` — but a sustained outage or API change needs a human fix |
 | Google Sheets API | Roster writes fail loudly into `#access-queue` the same way (see "Deprovisioning / annual re-review"); a sustained outage or API change needs a human fix, same as Drive |
+| Qualtrics (Harvard-provided) + HarvardKey SSO | The application and reconfirmation surveys live here, not in this repo. A Qualtrics outage or a change to the SSO attribute mapping blocks new submissions entirely (no fallback form) until fixed on the Qualtrics side — the Worker only ever receives what Qualtrics' Web Service task sends it, so there's nothing to degrade gracefully here beyond the usual shared-secret rejection |
 | OpenAI Moderation API | Chosen specifically because Google's Perspective API (the build spec's original pick) sunsets December 31, 2026 — see "Stage 1 moderation scoring." Free tier could change; scoring fails open (skips, logs, never blocks message processing) rather than breaking anything if it does |
 | Hono | Thin routing layer; swappable without touching business logic in `src/handlers/` |
 
@@ -651,6 +673,7 @@ src/
     reaction.ts             flag-emoji reaction handling
     channelCreated.ts        auto-joins new public channels
     verification.ts           access-queue submit + button handling + roster row
+    reconfirmation.ts           annual-reconfirmation submit + Reconfirmations-tab row
     messageEvent.ts             message.channels dispatch (cross-post + moderation scoring)
   archive/
     schema.ts               incident record types

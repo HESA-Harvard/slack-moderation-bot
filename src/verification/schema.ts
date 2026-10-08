@@ -5,14 +5,21 @@
  */
 export type ApplicantStatus = "degree_alb" | "degree_alm" | "certificate" | "premedical" | "course_taker";
 
-/** What Apps Script POSTs to /forms/verification-submit on a new form row. */
+/** What the Qualtrics Web Service task POSTs to /forms/verification-submit on a new survey response. */
 export interface VerificationSubmission {
   full_name: string;
   email: string;
-  /** True only when Forms' "Verified" email collection confirms the applicant controls this inbox. */
+  /** True only when the survey's HarvardKey SSO gate confirms this email as the respondent's actual Harvard-affiliated address — not self-typed, not just "a real inbox." */
   email_verified: boolean;
   status: ApplicantStatus;
   huid: string;
+  submitted_at: string;
+}
+
+/** What the Qualtrics Web Service task POSTs to /forms/reconfirmation-submit on each annual-reconfirmation response. */
+export interface ReconfirmationSubmission {
+  full_name: string;
+  email: string;
   submitted_at: string;
 }
 

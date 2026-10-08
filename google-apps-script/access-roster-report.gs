@@ -3,23 +3,29 @@
  *
  * Bound to the "HESA Access Roster" spreadsheet itself (Extensions > Apps
  * Script, opened from within that Sheet) — a separate Apps Script project
- * from access-queue.gs (which is bound to the original application Form).
- * Not deployed by `wrangler`.
+ * from access-queue.gs (which only sends applicant emails; it isn't bound
+ * to anything). Not deployed by `wrangler`.
  *
  * SETUP
  * 1. "Approvals" tab — written automatically by the Cloudflare Worker
  *    (src/handlers/verification.ts, appendRosterRow) on every Approve
  *    click. Columns: approval_id, approved_at, full_name, email, status,
  *    huid, approved_by. Treat it as an append-only log — don't hand-edit.
- * 2. "Reconfirmations" tab — set the "HESA Slack Annual Reconfirmation"
- *    Form's response destination (Responses tab → the green Sheets icon →
- *    "Select existing spreadsheet") to this same spreadsheet, and rename
- *    the tab it creates to exactly "Reconfirmations". Google Forms
- *    populates this natively — no code needed for that tab. Responses
- *    accumulate forever with no year boundary of their own, so the report
- *    only treats a response as valid if its Timestamp (added automatically
- *    by Forms) is within the last RECONFIRMATION_WINDOW_DAYS — otherwise a
- *    single reconfirmation would count for every year after it too.
+ * 2. "Reconfirmations" tab — needs to exist with a header row before the
+ *    first write; the Sheets API errors on a missing tab rather than
+ *    creating one (same caveat as the "Denials" tab in access-queue's
+ *    roster). Header: timestamp, email, full_name — the Worker
+ *    (src/handlers/reconfirmation.ts, appendRosterRow) writes rows in
+ *    exactly that order. (If this tab previously held the old
+ *    Google-Forms-native link's extra columns — Which best describes you?,
+ *    HUID, Community guidelines & access — those are gone now; this system
+ *    hadn't launched yet, so there was no historical data to preserve.)
+ *    findColumnByHeader below matches "email"/"timestamp" by substring, not
+ *    position, so the exact header wording isn't load-bearing beyond that.
+ *    Responses accumulate forever with no year boundary of their own, so
+ *    the report only treats a response as valid if its timestamp is within
+ *    the last RECONFIRMATION_WINDOW_DAYS — otherwise a single
+ *    reconfirmation would count for every year after it too.
  * 3. Paste this file in as the bound script (Extensions → Apps Script),
  *    save, then reload the spreadsheet — a "HESA Tools" menu should
  *    appear in the menu bar.

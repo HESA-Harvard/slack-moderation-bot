@@ -47,7 +47,7 @@ export function buildVerificationAlertBlocks(submission: VerificationSubmission,
 
   const details = [
     `*Name:* ${submission.full_name}`,
-    `*Email:* ${submission.email}${submission.email_verified ? " (verified)" : " (not verified)"}`,
+    `*Email:* ${submission.email}${submission.email_verified ? " (confirmed via HarvardKey SSO)" : " (not confirmed via SSO)"}`,
     `*Status:* ${statusLabel(submission.status)}`,
     `*HUID:* ${submission.huid}`,
   ];

@@ -6,8 +6,9 @@ import { handleChannelCreated, type ChannelCreatedEvent } from "./handlers/chann
 import { handleMessageEvent, type MessageChannelsEvent } from "./handlers/messageEvent";
 import { handleReportCommand, handleReportSubmission, isReportSubmission } from "./handlers/report";
 import { handleVerificationSubmit, handleVerificationAction, isVerificationAction } from "./handlers/verification";
+import { handleReconfirmationSubmit } from "./handlers/reconfirmation";
 import { handleInviteLinkRefreshed, INVITE_LINK_REFRESHED_ACTION_ID } from "./verification/inviteLinkGuard";
-import type { VerificationSubmission } from "./verification/schema";
+import type { VerificationSubmission, ReconfirmationSubmission } from "./verification/schema";
 
 export interface Env {
   DEDUPE: KVNamespace;
@@ -110,8 +111,9 @@ app.post("/slack/interactivity", async (c) => {
   return c.text("", 200);
 });
 
-// Not a Slack request — Apps Script relays new Google Form rows here. Authenticated
-// with a shared secret instead of Slack's signature scheme, so it sits outside /slack/*.
+// Not a Slack request — Qualtrics' Web Service task relays new access-request survey
+// responses here. Authenticated with a shared secret instead of Slack's signature
+// scheme, so it sits outside /slack/*.
 app.post("/forms/verification-submit", async (c) => {
   const provided = c.req.header("X-Form-Secret") ?? "";
   if (!timingSafeEqual(provided, c.env.FORM_INTEGRATION_SECRET)) {
@@ -120,6 +122,20 @@ app.post("/forms/verification-submit", async (c) => {
 
   const submission = (await c.req.json()) as VerificationSubmission;
   c.executionCtx.waitUntil(handleVerificationSubmit(c.env, submission));
+
+  return c.text("", 200);
+});
+
+// Same shared secret and relay pattern as above, from the separate annual-reconfirmation
+// Qualtrics survey's own Web Service task. No moderator alert — just a roster log row.
+app.post("/forms/reconfirmation-submit", async (c) => {
+  const provided = c.req.header("X-Form-Secret") ?? "";
+  if (!timingSafeEqual(provided, c.env.FORM_INTEGRATION_SECRET)) {
+    return c.text("invalid secret", 401);
+  }
+
+  const submission = (await c.req.json()) as ReconfirmationSubmission;
+  c.executionCtx.waitUntil(handleReconfirmationSubmit(c.env, submission));
 
   return c.text("", 200);
 });
