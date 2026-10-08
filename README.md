@@ -187,8 +187,18 @@ into script.google.com per the setup comment at the top of that file.
    must match `ApplicantStatus`/`STATUS_LABELS` in
    `src/verification/schema.ts` exactly, the same hand-kept-in-sync
    requirement the Form had (there's still no shared source of truth across
-   the survey/TypeScript boundary, just a different survey tool). Keep a
-   required "Community guidelines & access" consent question too; that one
+   the survey/TypeScript boundary, just a different survey tool). Pipe this
+   question's **plain label text** into the Web Service task body (the
+   question's default piped-text option) — not Qualtrics' numeric Recode
+   Value or its "Selected Choices Recode" option, confirmed by testing to
+   return the choice's plain numeric position (e.g. `"2"`), not a custom
+   code, which would silently point at the wrong status if the choices are
+   ever reordered. `statusFromLabel` in `src/verification/schema.ts` (called
+   from the `/forms/verification-submit` route) converts the label text to a
+   code on arrival — the same job `access-queue.gs`'s old
+   `STATUS_OPTION_TO_CODE` used to do. A mismatch falls back loudly to
+   "(unrecognized — check...)" in the alert rather than silently guessing.
+   Keep a required "Community guidelines & access" consent question too; that one
    is survey-only, never read by the Worker — its record is Qualtrics' own
    response log.
 2. A **Web Service task** in the survey's Qualtrics Workflow (fires on
@@ -450,14 +460,18 @@ spreadsheet and the `Incidents` tab. Reuses the existing `spreadsheets`
 OAuth scope already granted to the service account for the Access Roster —
 no new scope widening.
 
-## Deprovisioning / annual re-review
+## Deprovisioning / rolling re-review
 
 The Slack workspace is only supposed to be open to current HES students, and
 that isn't a one-time fact for anyone — course-taker/certificate/premedical
 eligibility is explicitly term-bound, but degree candidates (ALB/ALM) also
 graduate, withdraw, or otherwise stop being current students. Every approved
-member goes through the same annual reconfirmation; none are exempted by
-category.
+member goes through the same reconfirmation check; none are exempted by
+category. **This is rolling, not a single annual batch:** HESA approves
+members all year round, so each person's own reconfirmation clock starts at
+their own approval date and resets every time they reconfirm — there's no
+one shared calendar cutoff everyone is measured against. See "`Needs
+Review` tab" below for what that means for how/when this actually gets run.
 
 **No API can automate the actual removal.** `admin.users.remove` requires a
 paid Slack plan; this workspace is on Free. Removal is a manual step via
@@ -470,11 +484,21 @@ programmatic path on a non-Enterprise plan. Everything below produces a
 archive (one JSON file per incident, per CLAUDE.md Section 8), access
 approvals are written as rows in a single Google Sheet, **"HESA Access
 Roster."** The reason is specific to what this data is for: the whole point
-is diffing two lists (who was approved vs. who reconfirmed) once a year,
-which a spreadsheet does naturally and a folder of JSON files doesn't. This
-only applies to access-approval tracking — the moderation-incident archive
-is untouched.
+is diffing two lists (who was approved vs. who reconfirmed), which a
+spreadsheet does naturally and a folder of JSON files doesn't. This only
+applies to access-approval tracking — the moderation-incident archive is
+untouched.
 
+- **`Submissions` tab** (create it once, empty, with a header row containing
+  "timestamp" and "email" somewhere in it — same Sheets API caveat as every
+  other tab here) — one row per Qualtrics survey response, written by the
+  Worker (`recordSubmission` in `src/handlers/verification.ts`) *before* any
+  moderator decision. This is the durable record of an application that
+  doesn't end in Approve or Deny — a "Request info" with no follow-up, or an
+  alert nobody ever actions — which otherwise only ever existed as a Slack
+  message, gone once `#access-queue` ages past Slack's Free-plan retention
+  (90 days hidden, 1 year deleted). Columns: `timestamp, full_name, email,
+  email_verified, status, huid`.
 - **`Approvals` tab** — one row per Approve click (`approval_id,
   approved_at, full_name, email, status, huid, approved_by`), appended by
   the Worker via `appendRosterRow` in `src/archive/drive.ts`. Retries like
@@ -497,11 +521,13 @@ is untouched.
   compared to a self-service Google Form. Its own Workflow has a Web
   Service task POSTing to the Worker's `POST /forms/reconfirmation-submit`,
   same shared-secret header scheme as the application survey. **Responses
-  accumulate forever, with no year boundary of their own** — the report
-  only counts a response as valid for the current cycle if its timestamp
-  falls within the last `RECONFIRMATION_WINDOW_DAYS` (330 days) — otherwise
-  reconfirming once would incorrectly count for every year after it,
-  forever.
+  accumulate forever, with no year boundary of their own**, but that's fine
+  now: the report doesn't check "is there a recent-enough response at all"
+  against one shared cutoff, it finds each person's single *most recent*
+  response and checks whether more than `RECONFIRMATION_INTERVAL_DAYS` (395
+  days — 365 plus ~30 days' grace) has passed since then, or since their
+  last approval if they've never reconfirmed. See "`Needs Review` tab" below
+  for the full rolling comparison.
 - **`Removed` tab** (create it the first time someone's actually removed) —
   `email, removed_at, removed_by, reason_category, notes`, hand-maintained.
   `Approvals` is append-only and never edited (previous bullet), so without
@@ -543,15 +569,22 @@ is untouched.
   penalize anyone for having been denied once.
 - **`Needs Review` tab** — generated on demand by `google-apps-script/
   access-roster-report.gs`, a script bound to the spreadsheet itself (not a
-  Cloudflare Cron Trigger — this runs once a year, so scheduling
-  infrastructure wasn't worth adding). Adds a "HESA Tools → Generate
-  Reconfirmation Report" menu item to the Sheet; a moderator clicks it after
-  the reconfirmation window closes, and it lists every approved member —
-  degree candidates included — whose email doesn't appear in
-  `Reconfirmations` and isn't already recorded in `Removed`. The tab opens
+  Cloudflare Cron Trigger — this is a human clicking a menu item, not
+  something that needs scheduling infrastructure). Adds a "HESA Tools →
+  Generate Reconfirmation Report" menu item to the Sheet. **Rolling, not
+  annual**: for each approved member, it computes their own anchor date
+  (their most recent `Reconfirmations` response, or their approval date if
+  they've never reconfirmed) and lists them if more than
+  `RECONFIRMATION_INTERVAL_DAYS` has passed since then — degree candidates
+  included, same as everyone else. Because this is per-person rather than a
+  shared cutoff, **it's meant to be run periodically — monthly or
+  quarterly — not just once a year**; each run only surfaces whoever is
+  actually overdue *right now*. Output columns include `last_confirmed_at`
+  and `was_due` (both computed, not read from any sheet) so a moderator can
+  see each person's own deadline rather than just a flat list. The tab opens
   with a banner explaining what it is, when it ran, and how many
-  already-removed members were excluded — meant to be self-explanatory
-  without reading this file, including a year from now.
+  already-removed or recently-reconfirmed members were excluded — meant to
+  be self-explanatory without reading this file.
 
 **A warning on new applications too, not just the annual report.** When a
 new access-queue application comes in (`handleVerificationSubmit`, see
@@ -579,13 +612,18 @@ sharing" pattern as the Drive archive folder. The broader OAuth scope only
 grants the *ability* to call Sheets API methods; it doesn't grant access to
 any spreadsheet that happens to exist.
 
-**The announcement is a process, not a feature.** A single pinned post in
-`#general` (or a dedicated announcements channel) once a year, linking to
-the reconfirmation survey, with a deadline — no `@channel`, no automation. DMs
-aren't an option (see CLAUDE.md's "never request DM scopes"), and Slack's
-ephemeral messages don't reliably reach someone who isn't actively viewing
-the channel at that exact moment, so a public pinned post is the actual
-reliable option here, not a shortcut.
+**Telling people it's their turn is still a human process, not a feature —
+and it's an open question how, now that this is rolling.** There's no
+automation here and DMs aren't an option (see CLAUDE.md's "never request DM
+scopes"), which was already true under the old single-annual-campaign model.
+A rolling, per-person deadline makes the old fix (one pinned post, once a
+year) an incomplete answer on its own: a periodic `Needs Review` run tells a
+moderator *who* is overdue, but reaching each of those specific people —
+a public mention, a reply in a thread they're in, some other channel
+entirely — is a decision for HESA to make, not something this report
+solves. A recurring general reminder (e.g. "reconfirm around your
+join-anniversary") alongside the periodic report is one reasonable
+approach, but nothing here assumes a particular one.
 
 **Setup:**
 - Create the "HESA Access Roster" spreadsheet with an `Approvals` tab
@@ -593,6 +631,8 @@ reliable option here, not a shortcut.
   approved_by`) and share it with the service account's email as Editor.
 - Set `ACCESS_ROSTER_SHEET_ID` in `wrangler.toml` (from the spreadsheet's
   URL).
+- Add a `Submissions` tab to that same spreadsheet, empty except for a
+  header row containing "timestamp" and "email" somewhere in it.
 - Add a `Reconfirmations` tab to that same spreadsheet, empty except for a
   header row containing "email" and "timestamp" somewhere in it.
 - Create the "HESA Slack Annual Reconfirmation" Qualtrics survey (reusing
@@ -617,7 +657,7 @@ reliable option here, not a shortcut.
 | `FORM_INTEGRATION_SECRET` | secret | `wrangler secret put` | Shared secret with Apps Script — both directions, see "Access requests" |
 | `SHADOW_ALERTS_CHANNEL` | var | `wrangler.toml` | Channel ID (`C…`) for the private shadow-mode channel (cross-post + moderation scoring) |
 | `OPENAI_API_KEY` | secret | `wrangler secret put` | OpenAI API key, for Stage 1 moderation scoring |
-| `ACCESS_ROSTER_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Access Roster" — see "Deprovisioning / annual re-review" |
+| `ACCESS_ROSTER_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Access Roster" — see "Deprovisioning / rolling re-review" |
 | `INCIDENT_LOG_SHEET_ID` | var | `wrangler.toml` | Spreadsheet ID for the "HESA Moderation Incident Log" — see "Incident log" |
 | `DEDUPE` | KV namespace | `wrangler.toml` | Event dedup, alert dedup, incident-id + approval-id counters, cached Google access token, cross-post tracking |
 
@@ -653,7 +693,7 @@ scope of what changed.
 | Cloudflare Workers | Free tier limits (100K requests/day) are far above this workload; a pricing or policy change would require re-evaluating hosting per `docs/build-spec.md` Section 3 |
 | Slack Web API / Events API | Core to the app; a breaking API change would require handler updates |
 | Google Drive API | Archive writes fail loudly (a notice lands in `#mod-alerts` with the full record) rather than silently — see `src/archive/drive.ts` — but a sustained outage or API change needs a human fix |
-| Google Sheets API | Roster writes fail loudly into `#access-queue` the same way (see "Deprovisioning / annual re-review"); a sustained outage or API change needs a human fix, same as Drive |
+| Google Sheets API | Roster writes fail loudly into `#access-queue` the same way (see "Deprovisioning / rolling re-review"); a sustained outage or API change needs a human fix, same as Drive |
 | Qualtrics (Harvard-provided) + HarvardKey SSO | The application and reconfirmation surveys live here, not in this repo. A Qualtrics outage or a change to the SSO attribute mapping blocks new submissions entirely (no fallback form) until fixed on the Qualtrics side — the Worker only ever receives what Qualtrics' Web Service task sends it, so there's nothing to degrade gracefully here beyond the usual shared-secret rejection |
 | OpenAI Moderation API | Chosen specifically because Google's Perspective API (the build spec's original pick) sunsets December 31, 2026 — see "Stage 1 moderation scoring." Free tier could change; scoring fails open (skips, logs, never blocks message processing) rather than breaking anything if it does |
 | Hono | Thin routing layer; swappable without touching business logic in `src/handlers/` |

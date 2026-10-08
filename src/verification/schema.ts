@@ -1,7 +1,8 @@
 /**
- * Mirrors the Google Form's "Which best describes you?" options exactly —
- * see google-apps-script/access-queue.gs's header comment and STATUS_LABELS
- * below for the display text each maps to.
+ * Mirrors the Qualtrics survey's "Which best describes you?" options exactly
+ * — see STATUS_LABELS below for the display text each maps to, and
+ * statusFromLabel for how the Worker converts the raw label text Qualtrics
+ * pipes back into one of these codes.
  */
 export type ApplicantStatus = "degree_alb" | "degree_alm" | "certificate" | "premedical" | "course_taker";
 
@@ -23,7 +24,7 @@ export interface ReconfirmationSubmission {
   submitted_at: string;
 }
 
-/** Exact option text as it must appear in the Google Form. */
+/** Exact option text as it must appear in the Qualtrics survey question. */
 export const STATUS_LABELS: Record<ApplicantStatus, string> = {
   degree_alb: "Degree candidate - undergraduate (ALB)",
   degree_alm: "Degree candidate - graduate (ALM)",
@@ -31,6 +32,29 @@ export const STATUS_LABELS: Record<ApplicantStatus, string> = {
   premedical: "Premedical program",
   course_taker: "Non-degree course taker",
 };
+
+const LABEL_TO_STATUS: Record<string, ApplicantStatus> = Object.fromEntries(
+  (Object.entries(STATUS_LABELS) as [ApplicantStatus, string][]).map(([code, label]) => [label, code]),
+);
+
+/**
+ * Converts the Qualtrics survey's raw selected-choice label text into a
+ * code. Needed because Qualtrics' numeric Recode Value can't hold an
+ * arbitrary string — confirmed by testing: the "Selected Choices Recode"
+ * piped-text option returns the choice's plain numeric position (e.g. "2"),
+ * not a custom code, and keying off that position would silently point at
+ * the wrong status if the question's choices are ever reordered. So the
+ * survey's Web Service task pipes the plain label text instead (the
+ * question's default piped-text option), and this does the same
+ * label-matching access-queue.gs's old STATUS_OPTION_TO_CODE used to do
+ * before the Google Form relay was replaced. Matches by exact text — a
+ * mismatch (e.g. the option wording drifts) returns undefined, which
+ * surfaces loudly in the alert as "(unrecognized — check...)" rather than
+ * silently guessing.
+ */
+export function statusFromLabel(label: string): ApplicantStatus | undefined {
+  return LABEL_TO_STATUS[label];
+}
 
 export type VerificationAction = "approve" | "more_info" | "deny";
 

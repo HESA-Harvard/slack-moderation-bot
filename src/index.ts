@@ -8,7 +8,7 @@ import { handleReportCommand, handleReportSubmission, isReportSubmission } from 
 import { handleVerificationSubmit, handleVerificationAction, isVerificationAction } from "./handlers/verification";
 import { handleReconfirmationSubmit } from "./handlers/reconfirmation";
 import { handleInviteLinkRefreshed, INVITE_LINK_REFRESHED_ACTION_ID } from "./verification/inviteLinkGuard";
-import type { VerificationSubmission, ReconfirmationSubmission } from "./verification/schema";
+import { statusFromLabel, type VerificationSubmission, type ReconfirmationSubmission } from "./verification/schema";
 
 export interface Env {
   DEDUPE: KVNamespace;
@@ -121,6 +121,12 @@ app.post("/forms/verification-submit", async (c) => {
   }
 
   const submission = (await c.req.json()) as VerificationSubmission;
+  // Qualtrics pipes the survey question's raw choice label text for `status`,
+  // not a code — translate it here, the same job access-queue.gs's
+  // STATUS_OPTION_TO_CODE used to do before the Google Form relay was
+  // replaced. Left as-is (and caught by statusLabel's own fallback) if it
+  // doesn't match any known label.
+  submission.status = statusFromLabel(submission.status as unknown as string) ?? submission.status;
   c.executionCtx.waitUntil(handleVerificationSubmit(c.env, submission));
 
   return c.text("", 200);

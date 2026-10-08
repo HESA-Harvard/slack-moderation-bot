@@ -17,18 +17,49 @@ export interface VerificationEnv extends InviteLinkGuardEnv {
 }
 
 const APPROVALS_TAB = "Approvals";
+const SUBMISSIONS_TAB = "Submissions";
 
-/** New Google Form row, relayed by Apps Script. Caller has already ack'd; runs in waitUntil. */
+/** Qualtrics survey response, relayed by its Web Service task. Caller has already ack'd; runs in waitUntil. */
 export async function handleVerificationSubmit(env: VerificationEnv, submission: VerificationSubmission): Promise<void> {
   const [removedRows, denialsRows] = await Promise.all([
     readRosterRows(env, env.ACCESS_ROSTER_SHEET_ID, REMOVED_TAB),
     readRosterRows(env, env.ACCESS_ROSTER_SHEET_ID, DENIALS_TAB),
+    recordSubmission(env, submission),
   ]);
   const priorRemoval = findConductRemoval(removedRows, submission.email);
   const priorDenials = findPriorDenials(denialsRows, submission.email);
 
   const blocks = buildVerificationAlertBlocks(submission, priorRemoval, priorDenials);
   await postMessage(env.SLACK_BOT_TOKEN, env.ACCESS_QUEUE_CHANNEL, blocks, `New access request: ${submission.full_name}`);
+}
+
+/**
+ * Appends the raw submission to the roster spreadsheet's Submissions tab —
+ * the only durable record of an application that doesn't end in Approve or
+ * Deny (a "Request info" with no follow-up, or an alert nobody ever
+ * actions). Without this, that history only ever existed as a Slack message
+ * in #access-queue, gone once it ages past Slack's Free-plan retention (90
+ * days hidden, 1 year deleted) — same reasoning that justified the
+ * moderation evidence archive and the incident log. Never throws: on
+ * failure it posts a notice with the row data into #access-queue instead of
+ * losing the record silently, same pattern as recordApproval/recordDenial.
+ */
+async function recordSubmission(env: VerificationEnv, submission: VerificationSubmission): Promise<void> {
+  const row = [submission.submitted_at, submission.full_name, submission.email, submission.email_verified ? "yes" : "no", submission.status, submission.huid];
+  const ok = await appendRosterRow(env, env.ACCESS_ROSTER_SHEET_ID, SUBMISSIONS_TAB, row);
+  if (ok) return;
+
+  await postMessage(
+    env.SLACK_BOT_TOKEN,
+    env.ACCESS_QUEUE_CHANNEL,
+    [
+      section(
+        `:warning: *Submission-log write failed for ${submission.email}*\nCould not append this submission to the roster spreadsheet automatically. Add this row to the "${SUBMISSIONS_TAB}" tab manually if useful:`,
+      ),
+      section(`\`\`\`${JSON.stringify(row)}\`\`\``),
+    ],
+    `Submission-log write failed for ${submission.email} — add manually if useful`,
+  );
 }
 
 const ACTION_ID_TO_ACTION: Record<string, VerificationAction> = {

@@ -59,6 +59,61 @@ describe("handleVerificationSubmit", () => {
     expect(alertCall!.body).toContain('Claims \\"Degree candidate - graduate (ALM)\\" but verified email isn');
   });
 
+  it("writes a row to the Submissions tab, regardless of what the eventual decision will be", async () => {
+    const calls: { url: string; body: string }[] = [];
+    stubFetch(calls);
+
+    const submission: VerificationSubmission = {
+      full_name: "Jamie Rivera",
+      email: "jamie.rivera@gmail.com",
+      email_verified: true,
+      status: "course_taker",
+      huid: "12345678",
+      submitted_at: "2026-09-22T10:00:00.000Z",
+    };
+    await handleVerificationSubmit(await makeEnv(), submission);
+
+    const call = calls.find((c) => c.url.includes("sheets.googleapis.com") && c.url.includes("Submissions"));
+    expect(call).toBeDefined();
+    expect(call!.url).toContain("sheet123");
+    const [row] = JSON.parse(call!.body).values as string[][];
+    expect(row).toEqual(["2026-09-22T10:00:00.000Z", "Jamie Rivera", "jamie.rivera@gmail.com", "yes", "course_taker", "12345678"]);
+  });
+
+  it("posts a visible warning to #access-queue, not a silent failure, when the Submissions write fails", async () => {
+    const slackCalls: { url: string; body: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("oauth2.googleapis.com/token")) {
+          return new Response(JSON.stringify({ access_token: "fake-token", expires_in: 3600 }), { status: 200 });
+        }
+        if (url.includes("sheets.googleapis.com") && url.includes("Submissions")) {
+          return new Response("server error", { status: 500 });
+        }
+        slackCalls.push({ url, body: String(init?.body ?? "") });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    const submission: VerificationSubmission = {
+      full_name: "Jamie Rivera",
+      email: "jamie.rivera@gmail.com",
+      email_verified: true,
+      status: "course_taker",
+      huid: "12345678",
+      submitted_at: "2026-09-22T10:00:00.000Z",
+    };
+    await handleVerificationSubmit(await makeEnv(), submission);
+
+    const warningCall = slackCalls.find((c) => c.url.includes("chat.postMessage") && c.body.includes("Submission-log write failed"));
+    expect(warningCall).toBeDefined();
+    expect(warningCall!.body).toContain("jamie.rivera@gmail.com");
+    // The main alert still posts even though the Submissions write failed.
+    expect(slackCalls.some((c) => c.url.includes("chat.postMessage") && c.body.includes("New access request"))).toBe(true);
+  });
+
   it("does not warn for a course-taker without a harvard.edu email", async () => {
     const calls: { url: string; body: string }[] = [];
     stubFetch(calls);

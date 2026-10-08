@@ -1,10 +1,19 @@
 /**
- * HESA Access Roster — annual reconfirmation comparison.
+ * HESA Access Roster — rolling reconfirmation comparison.
  *
  * Bound to the "HESA Access Roster" spreadsheet itself (Extensions > Apps
  * Script, opened from within that Sheet) — a separate Apps Script project
  * from access-queue.gs (which only sends applicant emails; it isn't bound
  * to anything). Not deployed by `wrangler`.
+ *
+ * Rolling, not a shared annual cutoff: HESA approves members all year round,
+ * not in one intake batch, so there's no single calendar date that's fair to
+ * measure everyone against. Each person's own reconfirmation clock starts at
+ * their most recent approval and resets every time they reconfirm — see
+ * RECONFIRMATION_INTERVAL_DAYS and generateReconfirmationReport below. That
+ * means this report is safe (and meant) to run periodically — monthly or
+ * quarterly — rather than once a year; each run only surfaces whoever's
+ * actually overdue *right now*, not a single annual batch.
  *
  * SETUP
  * 1. "Approvals" tab — written automatically by the Cloudflare Worker
@@ -16,25 +25,22 @@
  *    creating one (same caveat as the "Denials" tab in access-queue's
  *    roster). Header: timestamp, email, full_name — the Worker
  *    (src/handlers/reconfirmation.ts, appendRosterRow) writes rows in
- *    exactly that order. (If this tab previously held the old
- *    Google-Forms-native link's extra columns — Which best describes you?,
- *    HUID, Community guidelines & access — those are gone now; this system
- *    hadn't launched yet, so there was no historical data to preserve.)
- *    findColumnByHeader below matches "email"/"timestamp" by substring, not
- *    position, so the exact header wording isn't load-bearing beyond that.
- *    Responses accumulate forever with no year boundary of their own, so
- *    the report only treats a response as valid if its timestamp is within
- *    the last RECONFIRMATION_WINDOW_DAYS — otherwise a single
- *    reconfirmation would count for every year after it too.
+ *    exactly that order. findColumnByHeader below matches "email"/
+ *    "timestamp" by substring, not position, so the exact header wording
+ *    isn't load-bearing beyond that. Responses accumulate forever — this
+ *    script always reads each person's *most recent* response, not just
+ *    whether one exists at all, which is what makes a per-person rolling
+ *    window possible in the first place.
  * 3. Paste this file in as the bound script (Extensions → Apps Script),
  *    save, then reload the spreadsheet — a "HESA Tools" menu should
  *    appear in the menu bar.
- * 4. Once a year, after the reconfirmation window closes: HESA Tools →
- *    Generate Reconfirmation Report. Writes/overwrites a "Needs Review"
- *    tab listing every approved member who hasn't reconfirmed — degree
- *    candidates included. Degree status isn't a one-time check either:
- *    people graduate, withdraw, or otherwise stop being current HES
- *    students, so everyone goes through the same annual check.
+ * 4. Run HESA Tools → Generate Reconfirmation Report periodically (monthly
+ *    or quarterly is reasonable) rather than just once a year. Writes/
+ *    overwrites a "Needs Review" tab listing every approved member whose
+ *    own rolling window has lapsed — degree candidates included. Degree
+ *    status isn't a one-time check either: people graduate, withdraw, or
+ *    otherwise stop being current HES students, so everyone goes through
+ *    the same check, regardless of category.
  * 5. "Removed" tab (create it the first time you remove someone) — columns:
  *    email, removed_at, removed_by, reason_category, notes. "Approvals" is
  *    an append-only log (step 1) and is never edited, so without this,
@@ -81,13 +87,13 @@ var RECONFIRMATIONS_TAB = "Reconfirmations";
 var REMOVED_TAB = "Removed";
 var NEEDS_REVIEW_TAB = "Needs Review";
 
-// Google Forms responses accumulate in "Reconfirmations" forever — there's
-// no year boundary Forms enforces for you. Without this window, reconfirming
-// once would count as reconfirmed in every future year too. 330 days (~11
-// months) rather than exactly 365 gives slack for the report running a bit
-// earlier or later each year without a genuinely stale reconfirmation still
-// counting.
-var RECONFIRMATION_WINDOW_DAYS = 330;
+// HESA approves members on a rolling basis all year, not in one annual
+// intake batch — so reconfirmation is rolling too: each person's own clock
+// starts at their most recent approval and resets every time they
+// reconfirm, rather than everyone sharing one calendar cutoff. 395 days
+// (365 + ~30 days grace) rather than exactly 365 gives slack for this report
+// not being run on the exact anniversary of everyone's last check-in.
+var RECONFIRMATION_INTERVAL_DAYS = 395;
 
 // Column positions in "Approvals" — fixed, since the Worker writes this tab
 // with exactly this layout. See appendRosterRow's caller in verification.ts.
@@ -107,8 +113,7 @@ function generateReconfirmationReport() {
     return;
   }
 
-  var windowStart = new Date(Date.now() - RECONFIRMATION_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  var reconfirmedEmails = collectRecentEmailsByHeader(reconfirmSheet, windowStart);
+  var latestReconfirmByEmail = collectLatestDateByEmail(reconfirmSheet, "timestamp");
   var removedSheet = ss.getSheetByName(REMOVED_TAB);
   var latestRemovalByEmail = removedSheet ? collectLatestDateByEmail(removedSheet, "removed_at") : {};
   var approvalsData = approvalsSheet.getDataRange().getValues();
@@ -129,7 +134,7 @@ function generateReconfirmationReport() {
     }
   }
 
-  var needsReview = [["full_name", "email", "status", "huid", "approved_at"]];
+  var needsReview = [["full_name", "email", "status", "huid", "approved_at", "last_confirmed_at", "was_due"]];
   var skippedReconfirmed = 0;
   var skippedRemoved = 0;
   for (var email in latestApprovalByEmail) {
@@ -149,28 +154,50 @@ function generateReconfirmationReport() {
       continue; // their most recent approval predates this removal — superseded, not re-approved since
     }
 
-    if (reconfirmedEmails.indexOf(email) !== -1) {
+    // Rolling, per person: their own clock starts at approval and resets
+    // every time they reconfirm — never a single shared cutoff everyone is
+    // measured against (HESA approves people all year round, not in one
+    // annual batch, so there's no one calendar date that's fair to everyone).
+    var latestReconfirm = latestReconfirmByEmail[email];
+    var anchor = latestReconfirm && latestReconfirm > entry.approvedAt ? latestReconfirm : entry.approvedAt;
+    var dueDate = new Date(anchor.getTime() + RECONFIRMATION_INTERVAL_DAYS * 24 * 60 * 60 * 1000);
+    if (dueDate > new Date()) {
       skippedReconfirmed++;
-      continue; // reconfirmed already, all set
+      continue; // reconfirmed (or approved) recently enough, all set
     }
 
     var row = entry.row;
-    needsReview.push([row[APPROVALS_COLS.full_name], row[APPROVALS_COLS.email], row[APPROVALS_COLS.status], row[APPROVALS_COLS.huid], row[APPROVALS_COLS.approved_at]]);
+    // last_confirmed_at/was_due are computed here, not read from any sheet —
+    // they tell a moderator why this person is on the list (their own last
+    // check-in, and when their rolling window actually ran out), since
+    // different people go overdue on different dates now.
+    needsReview.push([
+      row[APPROVALS_COLS.full_name],
+      row[APPROVALS_COLS.email],
+      row[APPROVALS_COLS.status],
+      row[APPROVALS_COLS.huid],
+      row[APPROVALS_COLS.approved_at],
+      anchor.toISOString(),
+      dueDate.toISOString(),
+    ]);
   }
   needsReview = [needsReview[0]].concat(needsReview.slice(1).sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])); }));
 
   var memberCount = needsReview.length - 1;
   var banner =
-    "Approved members whose most recent approval isn't covered by a \"" + RECONFIRMATIONS_TAB + "\" response in the last " + RECONFIRMATION_WINDOW_DAYS +
-    " days, or a later \"" + REMOVED_TAB + "\" entry, as of " + new Date().toISOString() +
-    " (" + skippedReconfirmed + " reconfirmed within that window, " + skippedRemoved + " already removed and not re-approved since — both excluded)" +
-    ". NOT a removal list — review each person before taking any action. Generated via HESA Tools → Generate Reconfirmation Report.";
+    "Approved members whose own rolling " + RECONFIRMATION_INTERVAL_DAYS + "-day window (from their most recent approval or reconfirmation, " +
+    "whichever is later, not a shared calendar date) has lapsed as of " + new Date().toISOString() + ", and aren't covered by a later \"" +
+    REMOVED_TAB + "\" entry" +
+    " (" + skippedReconfirmed + " still within their own window, " + skippedRemoved + " already removed and not re-approved since — both excluded)" +
+    ". \"was_due\" shows each person's own deadline. NOT a removal list — review each person before taking any action. " +
+    "Safe to run anytime, not just once a year — this report is per-person, not a shared annual cutoff. " +
+    "Generated via HESA Tools → Generate Reconfirmation Report.";
 
   var existing = ss.getSheetByName(NEEDS_REVIEW_TAB);
   if (existing) ss.deleteSheet(existing);
   var out = ss.insertSheet(NEEDS_REVIEW_TAB);
 
-  var bannerColumnSpan = 9; // wider than the 5 data columns (A–G) so the wrapped text takes fewer lines
+  var bannerColumnSpan = 9; // wider than the 7 data columns (A–G) so the wrapped text takes fewer lines
   out.getRange(1, 1).setValue(banner);
   out.getRange(1, 1, 1, bannerColumnSpan).merge().setWrap(true).setFontStyle("italic");
 
@@ -214,32 +241,12 @@ function collectEmailsByHeader(sheet) {
 }
 
 /**
- * Like collectEmailsByHeader, but only counts a row if its Timestamp is on
- * or after `sinceDate` — see RECONFIRMATION_WINDOW_DAYS above for why this
- * matters: Google Forms responses never expire on their own, so without
- * this a single reconfirmation would count for every year after it too.
- * The "Timestamp" column is added automatically by Google Forms to every
- * linked response sheet; no setup needed for it to exist.
+ * Like collectEmailsByHeader, but keyed to the latest Date value in a second
+ * column (e.g. "removed_at", or "timestamp" for Reconfirmations) — used for
+ * both the removal-precedence check and the rolling reconfirmation anchor,
+ * since both need each person's single *most recent* date, not just whether
+ * any row exists for them at all.
  */
-function collectRecentEmailsByHeader(sheet, sinceDate) {
-  var data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-
-  var emailCol = findColumnByHeader(data[0], "email");
-  var timestampCol = findColumnByHeader(data[0], "timestamp");
-  if (emailCol === -1 || timestampCol === -1) return [];
-
-  var emails = [];
-  for (var r = 1; r < data.length; r++) {
-    var email = String(data[r][emailCol] || "").toLowerCase().trim();
-    if (!email) continue;
-    var timestamp = new Date(data[r][timestampCol]);
-    if (timestamp >= sinceDate) emails.push(email);
-  }
-  return emails;
-}
-
-/** Like collectEmailsByHeader, but keyed to the latest Date value in a second column (e.g. removed_at). */
 function collectLatestDateByEmail(sheet, dateHeaderSubstring) {
   var data = sheet.getDataRange().getValues();
   if (data.length === 0) return {};
