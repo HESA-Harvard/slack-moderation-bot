@@ -73,6 +73,22 @@
  *    separate, lighter-weight log used only to show a neutral "applied
  *    before and was denied" note on a later reapplication
  *    (src/verification/priorDenial.ts).
+ * 7. HESA Tools → Send Reconfirmation Reminders — a *separate* step from
+ *    generating the report, deliberately: review (and edit, if needed —
+ *    delete a row for anyone you don't want reminded) "Needs Review" first,
+ *    then come back and send. This never runs on its own; nothing here
+ *    computes "overdue" and emails people automatically. Needs two Script
+ *    Properties on *this* project (Project Settings → Script Properties):
+ *      FORM_INTEGRATION_SECRET — same value as access-queue.gs's
+ *      EMAIL_CALLBACK_URL      — access-queue.gs's deployed Web App URL,
+ *                                same value as the Worker's
+ *                                FORM_CALLBACK_URL var in wrangler.toml
+ *    Sends via access-queue.gs's existing doPost + MailApp (same "From: HESA"
+ *    identity as every other applicant email) rather than this script
+ *    sending directly — a bound script's custom-menu functions execute as
+ *    whichever Sheet editor clicked the menu, not a fixed identity, so
+ *    sending straight from here would make the "From" address depend on
+ *    who happened to click it that day.
  *
  * This only ever produces a report for a human to review — it never removes
  * anyone or changes access itself, and never decides who gets approved
@@ -100,7 +116,11 @@ var RECONFIRMATION_INTERVAL_DAYS = 395;
 var APPROVALS_COLS = { full_name: 2, email: 3, status: 4, huid: 5, approved_at: 1 };
 
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu("HESA Tools").addItem("Generate Reconfirmation Report", "generateReconfirmationReport").addToUi();
+  SpreadsheetApp.getUi()
+    .createMenu("HESA Tools")
+    .addItem("Generate Reconfirmation Report", "generateReconfirmationReport")
+    .addItem("Send Reconfirmation Reminders", "sendReconfirmationReminders")
+    .addToUi();
 }
 
 function generateReconfirmationReport() {
@@ -208,6 +228,65 @@ function generateReconfirmationReport() {
   SpreadsheetApp.getUi().alert(
     "Done — " + memberCount + ' member(s) listed in "' + NEEDS_REVIEW_TAB + '" haven\'t reconfirmed recently. ' +
       "This is a starting point for a human to review, not a removal list — always double-check before removing anyone from Slack.",
+  );
+}
+
+/**
+ * Emails a reminder to everyone currently listed in "Needs Review" — run
+ * this only after reviewing (and editing, if needed) that list, never as
+ * part of generateReconfirmationReport itself. Sends via access-queue.gs's
+ * doPost, not MailApp directly — see this script's header comment (step 7)
+ * for why a bound script's own menu-triggered send would use the wrong
+ * "From" identity.
+ */
+function sendReconfirmationReminders() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var needsReviewSheet = ss.getSheetByName(NEEDS_REVIEW_TAB);
+  if (!needsReviewSheet) {
+    SpreadsheetApp.getUi().alert(
+      'No "' + NEEDS_REVIEW_TAB + '" tab found. Run "Generate Reconfirmation Report" first, review the list, then come back and send reminders.',
+    );
+    return;
+  }
+
+  var props = PropertiesService.getScriptProperties();
+  var callbackUrl = props.getProperty("EMAIL_CALLBACK_URL");
+  var secret = props.getProperty("FORM_INTEGRATION_SECRET");
+  if (!callbackUrl || !secret) {
+    SpreadsheetApp.getUi().alert("Missing EMAIL_CALLBACK_URL or FORM_INTEGRATION_SECRET Script Property — see this script's header comment (step 7) for setup.");
+    return;
+  }
+
+  // Row 1 is the banner, row 2 is the header (see generateReconfirmationReport)
+  // — data starts at row 3.
+  var data = needsReviewSheet.getDataRange().getValues();
+  var rows = data.slice(2);
+
+  var sent = 0;
+  var failed = 0;
+  rows.forEach(function (row) {
+    var fullName = row[0];
+    var email = row[1];
+    if (!email) return;
+
+    var response = UrlFetchApp.fetch(callbackUrl, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify({ secret: secret, action: "reconfirmation_reminder", full_name: fullName, email: email }),
+      muteHttpExceptions: true, // so a per-recipient failure doesn't abort the rest of the list
+    });
+
+    if (response.getResponseCode() === 200) {
+      sent++;
+    } else {
+      failed++;
+      Logger.log("Reminder failed for %s: %s %s", email, response.getResponseCode(), response.getContentText());
+    }
+  });
+
+  SpreadsheetApp.getUi().alert(
+    "Sent " + sent + " reminder(s)" + (failed > 0 ? ", " + failed + " failed — check Executions for details." : ".") +
+      ' This only emails whoever is currently listed in "' + NEEDS_REVIEW_TAB + '" — delete rows there first for anyone you don\'t want reminded.',
   );
 }
 

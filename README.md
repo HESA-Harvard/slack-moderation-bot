@@ -584,7 +584,9 @@ untouched.
   see each person's own deadline rather than just a flat list. The tab opens
   with a banner explaining what it is, when it ran, and how many
   already-removed or recently-reconfirmed members were excluded — meant to
-  be self-explanatory without reading this file.
+  be self-explanatory without reading this file. See "Telling people it's
+  their turn" below for the separate, human-triggered step that actually
+  emails whoever ends up listed here.
 
 **A warning on new applications too, not just the annual report.** When a
 new access-queue application comes in (`handleVerificationSubmit`, see
@@ -612,18 +614,34 @@ sharing" pattern as the Drive archive folder. The broader OAuth scope only
 grants the *ability* to call Sheets API methods; it doesn't grant access to
 any spreadsheet that happens to exist.
 
-**Telling people it's their turn is still a human process, not a feature —
-and it's an open question how, now that this is rolling.** There's no
-automation here and DMs aren't an option (see CLAUDE.md's "never request DM
-scopes"), which was already true under the old single-annual-campaign model.
-A rolling, per-person deadline makes the old fix (one pinned post, once a
-year) an incomplete answer on its own: a periodic `Needs Review` run tells a
-moderator *who* is overdue, but reaching each of those specific people —
-a public mention, a reply in a thread they're in, some other channel
-entirely — is a decision for HESA to make, not something this report
-solves. A recurring general reminder (e.g. "reconfirm around your
-join-anniversary") alongside the periodic report is one reasonable
-approach, but nothing here assumes a particular one.
+**Telling people it's their turn: email, not Slack.** DMs aren't an option
+(see CLAUDE.md's "never request DM scopes") — and that holds regardless of
+which Slack API would be used to reach someone individually (direct message,
+or even Slack's own native reminder feature triggered programmatically):
+anything that lets the app proactively reach a specific member outside a
+public channel, on its own judgment, weakens the same structural "this app
+is technically incapable of touching DMs" guarantee the project is built
+around, whichever API surface it goes through. Slack's reminders API is also
+being retired by Slack itself and its replacement (Workflow Builder) is a
+paid feature anyway, so it wasn't a viable path even setting that aside.
+
+Email sidesteps all of it, and the infrastructure already exists:
+`access-queue.gs`'s `reconfirmation_reminder` template (`EMAIL_TEMPLATES`)
+sends via the same `MailApp` call already used for Approve/Request
+info/Deny, triggered by a **second, separate** "HESA Tools → Send
+Reconfirmation Reminders" menu item in `access-roster-report.gs` —
+deliberately not folded into "Generate Reconfirmation Report" itself, so a
+moderator reviews (and can edit — delete a row for anyone they don't want
+reminded) the `Needs Review` list before anything is sent. Nothing here
+computes "overdue" and emails people on its own; a human runs both steps.
+Needs its own `EMAIL_CALLBACK_URL` + `FORM_INTEGRATION_SECRET` Script
+Properties on the Access Roster's bound script (see
+`access-roster-report.gs`'s header, step 7) — sending goes through
+`access-queue.gs`'s `doPost` rather than `MailApp` directly from the bound
+script, since a bound script's menu-triggered functions execute as whichever
+Sheet editor clicked the menu, not a fixed identity; routing through the
+existing Web App keeps every applicant-facing email coming from the same
+"From: HESA" identity regardless of who triggered it.
 
 **Setup:**
 - Create the "HESA Access Roster" spreadsheet with an `Approvals` tab
@@ -641,6 +659,13 @@ approach, but nothing here assumes a particular one.
   `POST /forms/reconfirmation-submit`.
 - Paste `google-apps-script/access-roster-report.gs` in as the spreadsheet's
   bound script (Extensions → Apps Script, from within the Sheet itself).
+- On that same bound script's Project Settings → Script Properties, add
+  `EMAIL_CALLBACK_URL` (= `access-queue.gs`'s deployed Web App URL, the same
+  value as the Worker's `FORM_CALLBACK_URL`) and `FORM_INTEGRATION_SECRET`
+  (same value as `access-queue.gs`'s).
+- On `access-queue.gs`'s own Script Properties, add
+  `RECONFIRMATION_SURVEY_URL` (the reconfirmation Qualtrics survey's public
+  link) for the reminder email template to use.
 
 ## Configuration reference
 

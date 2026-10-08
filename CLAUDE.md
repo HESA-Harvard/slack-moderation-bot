@@ -276,6 +276,7 @@ Stop and ask the human rather than choosing on your own:
 - Whether modal file upload for screenshots is workable. Omit it rather than shipping something partial
 - Whether the Google Cloud project can run with billing disabled. This is being tested separately; if Drive API calls fail with a billing error, report it and stop rather than working around it
 - Incident ID generation under concurrent submissions is best-effort for now
+- Potential enhancement, not built: a "stale applications" report cross-referencing `Submissions` against `Approvals`/`Denials` by email, to surface requests sitting unanswered for more than N days — same shape as the `Needs Review` comparison, different tabs and a much shorter threshold
 
 **Context you should have.** Two companion documents exist: the build spec (full design, phases 2 to 4, classifier design) and the moderation policy (severity tiers, escalation matrix, what happens to a report after an alert fires). If a design question is not answered here, check the build spec before improvising.
 

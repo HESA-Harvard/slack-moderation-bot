@@ -54,6 +54,14 @@
  *                                  README's "Invite-link expiry" section —
  *                                  there's no scheduled check for it.
  *      REPLY_TO_EMAIL           — hesa@g.harvard.edu
+ *      RECONFIRMATION_SURVEY_URL — public link to the "HESA Slack Annual
+ *                                  Reconfirmation" Qualtrics survey, used by
+ *                                  the reconfirmation_reminder template
+ *                                  below. Triggered from a separate script
+ *                                  — access-roster-report.gs's "Send
+ *                                  Reconfirmation Reminders" menu item —
+ *                                  POSTing here the same way the Worker
+ *                                  does, with the same FORM_INTEGRATION_SECRET.
  * 3. Deploy → New deployment → type "Web app" → Execute as "Me",
  *    Who has access "Anyone" (this is fine: doPost() itself checks the
  *    shared secret in the body — see comment there). Copy the deployment
@@ -124,14 +132,33 @@ var EMAIL_TEMPLATES = {
         "and we'll take another look.\n\nHESA",
     };
   },
+  // Triggered by a human (access-roster-report.gs's "Send Reconfirmation
+  // Reminders" menu item, run after reviewing the "Needs Review" tab) — not
+  // sent automatically by anything computing overdue status on its own. Kept
+  // plain and low-stakes on purpose: this isn't a warning about misconduct,
+  // just routine upkeep, so it shouldn't read as one.
+  reconfirmation_reminder: function (ctx) {
+    return {
+      subject: "Please reconfirm your HESA Slack access",
+      body:
+        "Hi " + ctx.name + ",\n\n" +
+        "It's been a while since your HESA Slack access was last confirmed. To keep your access " +
+        "active, please fill out this short survey:\n" +
+        ctx.reconfirmUrl + "\n\n" +
+        "If you're no longer a current HES student, no action is needed — thanks for your time with " +
+        "HESA.\n\nHESA",
+    };
+  },
 };
 
 /**
- * Web app endpoint the Worker calls after a moderator clicks Approve /
- * Request info / Deny in #access-queue. Web Apps can't read custom request
- * headers, so — unlike everywhere else in this project — the shared secret
- * here travels in the JSON body instead; see src/verification/formsClient.ts
- * for the matching comment on the Worker side.
+ * Web app endpoint called by two different callers, both with the same
+ * shared-secret-in-body scheme: the Worker, after a moderator clicks
+ * Approve/Request info/Deny in #access-queue (see
+ * src/verification/formsClient.ts for the matching comment there), and
+ * access-roster-report.gs's "Send Reconfirmation Reminders" menu item. Web
+ * Apps can't read custom request headers, so — unlike everywhere else in
+ * this project — the shared secret travels in the JSON body instead.
  */
 function doPost(e) {
   var props = PropertiesService.getScriptProperties();
@@ -154,6 +181,7 @@ function doPost(e) {
     email: body.email,
     status: body.status,
     inviteLink: props.getProperty("SLACK_INVITE_LINK"),
+    reconfirmUrl: props.getProperty("RECONFIRMATION_SURVEY_URL"),
   });
 
   MailApp.sendEmail({
