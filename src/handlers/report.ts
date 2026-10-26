@@ -28,7 +28,7 @@ interface ViewSubmissionPayload {
           {
             value?: string;
             selected_option?: { value: string };
-            selected_date_time?: number;
+            selected_date_time?: number | null;
             rich_text_value?: RichTextValue;
           }
         >
@@ -47,7 +47,7 @@ function selectValue(payload: ViewSubmissionPayload, blockId: string): string | 
 }
 
 function dateTimeValue(payload: ViewSubmissionPayload, blockId: string): number | undefined {
-  return payload.view.state.values[blockId]?.value?.selected_date_time;
+  return payload.view.state.values[blockId]?.value?.selected_date_time ?? undefined;
 }
 
 function richTextFieldValue(payload: ViewSubmissionPayload, blockId: string): string {

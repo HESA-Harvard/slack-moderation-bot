@@ -3,6 +3,7 @@ import { env } from "cloudflare:test";
 import { handleReportSubmission, type ReportEnv } from "../src/handlers/report";
 import { fakeServiceAccountKey } from "./helpers/fakeServiceAccountKey";
 import viewSubmissionFixture from "./fixtures/view_submission.json";
+import viewSubmissionNoWhenFixture from "./fixtures/view_submission_no_when.json";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -65,5 +66,27 @@ describe("handleReportSubmission", () => {
     // The "Where" field (fixture selects C0GENERAL) must be visible in the alert,
     // not just the archive file — moderators shouldn't have to open Drive to see it.
     expect(alertCall!.body).toContain("C0GENERAL");
+  });
+
+  it("omits the When line instead of falling back to the epoch when the datetimepicker is left blank", async () => {
+    // Slack sends `selected_date_time: null` (not an absent key) for an unset optional
+    // datetimepicker, which previously survived an `!== undefined` check and rendered as 1970-01-01.
+    const capture: { driveBody?: string; slackCalls: { url: string; body: string }[] } = { slackCalls: [] };
+    stubFetch(capture);
+
+    const reportEnv: ReportEnv = {
+      DEDUPE: env.DEDUPE,
+      GOOGLE_SA_KEY: await fakeServiceAccountKey(),
+      ARCHIVE_FOLDER_ID: "folder123",
+      SLACK_BOT_TOKEN: "xoxb-test",
+      MOD_ALERTS_CHANNEL: "C0MOD",
+      INCIDENT_LOG_SHEET_ID: "incidents123",
+    };
+
+    await handleReportSubmission(reportEnv, viewSubmissionNoWhenFixture as never);
+
+    expect(capture.driveBody).toBeDefined();
+    expect(capture.driveBody).not.toContain("1970-01-01");
+    expect(capture.driveBody).not.toContain("When:");
   });
 });
